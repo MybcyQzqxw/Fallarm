@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
 #
@@ -34,7 +34,7 @@ from isaacgym import gymutil
 import numpy as np
 import torch
 
-# Base class for RL tasks
+
 class BaseTask():
 
     def __init__(self, cfg, sim_params, physics_engine, sim_device, headless):
@@ -47,14 +47,14 @@ class BaseTask():
         self.headless = headless
 
         # env device is GPU only if sim is on GPU and use_gpu_pipeline=True, otherwise returned tensors are copied to CPU by physX.
-        if sim_device_type=='cuda' and sim_params.use_gpu_pipeline:
+        if sim_device_type == 'cuda' and sim_params.use_gpu_pipeline:
             self.device = self.sim_device
         else:
             self.device = 'cpu'
 
         # graphics device for rendering, -1 for no rendering
         self.graphics_device_id = self.sim_device_id
-        if self.headless == True:
+        if self.headless:
             self.graphics_device_id = -1
 
         self.num_envs = cfg.env.num_envs
@@ -74,7 +74,7 @@ class BaseTask():
         self.time_out_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
         if self.num_privileged_obs is not None:
             self.privileged_obs_buf = torch.zeros(self.num_envs, self.num_privileged_obs, device=self.device, dtype=torch.float)
-        else: 
+        else:
             self.privileged_obs_buf = None
             # self.num_privileged_obs = self.num_obs
 
@@ -89,18 +89,20 @@ class BaseTask():
         self.viewer = None
 
         # if running with a viewer, set up keyboard shortcuts and camera
-        if self.headless == False:
+        if not self.headless:
             # subscribe to keyboard shortcuts
             self.viewer = self.gym.create_viewer(
                 self.sim, gymapi.CameraProperties())
             self.gym.subscribe_viewer_keyboard_event(
-                self.viewer, gymapi.KEY_ESCAPE, "QUIT")
+                self.viewer, gymapi.KEY_ESCAPE, 'QUIT')
             self.gym.subscribe_viewer_keyboard_event(
-                self.viewer, gymapi.KEY_V, "toggle_viewer_sync")
+                self.viewer, gymapi.KEY_SPACE, 'pause')
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_V, 'toggle_viewer_sync')
 
     def get_observations(self):
         return self.obs_buf
-    
+
     def get_privileged_observations(self):
         return self.privileged_obs_buf
 
@@ -109,7 +111,6 @@ class BaseTask():
         raise NotImplementedError
 
     def reset(self):
-        """ Reset all robots"""
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         obs, privileged_obs, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
         return obs, privileged_obs
@@ -125,9 +126,9 @@ class BaseTask():
 
             # check for keyboard events
             for evt in self.gym.query_viewer_action_events(self.viewer):
-                if evt.action == "QUIT" and evt.value > 0:
+                if evt.action == 'QUIT' and evt.value > 0:
                     sys.exit()
-                elif evt.action == "toggle_viewer_sync" and evt.value > 0:
+                elif evt.action == 'toggle_viewer_sync' and evt.value > 0:
                     self.enable_viewer_sync = not self.enable_viewer_sync
 
             # fetch results

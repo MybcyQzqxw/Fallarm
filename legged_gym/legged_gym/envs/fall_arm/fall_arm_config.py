@@ -175,7 +175,7 @@ class FallArmCfg(BaseConfig):
             task_low_slider_acc = 1
             task_high_min_shoulder_root_height = 1
 
-    class constraints(BaseConfig.rewards):
+    class constraints:
         # style reward
         low_shoulder_pitch_torque_sigma = 150.0
         low_elbow_torque_sigma = 150.0

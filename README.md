@@ -50,6 +50,7 @@ Fast and simple implementation of RL algorithms designed to run fully on GPU. Th
     ```bash
     cd rsl_rl && pip install -e . && cd .. 
     cd legged_gym &&  pip install -e . && cd .. 
+    pip install tensorboard
     ```
 ---
 
@@ -73,7 +74,7 @@ Fast and simple implementation of RL algorithms designed to run fully on GPU. Th
 
 ### Train
 ```bash
-python legged_gym/scripts/train.py --task=anymal_c_flat
+python legged_gym/scripts/train.py --task fall_arm --run_name test_fall_arm
 ```
 - Run on CPU: add `--sim_device=cpu --rl_device=cpu`
 - Run headless: add `--headless`
@@ -94,7 +95,7 @@ Key CLI arguments:
 
 ### Play a Trained Policy
 ```bash
-python legged_gym/scripts/play.py --task=anymal_c_flat
+python legged_gym/scripts/play.py --task fall_arm --checkpoint_path /path/to/checkpoint.pt
 ```
 
 ---

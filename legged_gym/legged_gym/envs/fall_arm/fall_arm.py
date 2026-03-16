@@ -40,16 +40,16 @@ class FallArm(BaseTask):
         self.num_dofs = cfg.env.num_dofs
         self.num_real_dofs = cfg.env.num_real_dofs
 
-        # 初始化中包含一句 self.create_sim()
-        # self.create_sim() 中包含 self._create_envs()
-        super().__init__(self.cfg, sim_params, physics_engine, sim_device, headless)
-
         # 单步观测维度
         self.num_one_step_obs = self.cfg.env.num_one_step_observations  # if not self.cfg.env.add_force else self.cfg.env.num_one_step_observations + 1
         # 历史观测长度
         self.actor_history_length = self.cfg.env.num_actor_history
         # 总观测数 = 单步观测维度 * 历史观测长度
         self.actor_proprioceptive_obs_length = self.num_one_step_obs * self.actor_history_length
+
+        # 初始化中包含一句 self.create_sim()
+        # self.create_sim() 中包含 self._create_envs()
+        super().__init__(self.cfg, sim_params, physics_engine, sim_device, headless)
 
         if not self.headless:
             self.set_camera(self.cfg.viewer.pos, self.cfg.viewer.lookat)
@@ -93,7 +93,7 @@ class FallArm(BaseTask):
 
             # 每个子步刷新接触力, 累积峰值和接触状态
             self.gym.refresh_net_contact_force_tensor(self.sim)
-            substep_force = torch.norm(self.contact_forces[:, self.end_idx, :], dim=-1)
+            substep_force = torch.norm(self.contact_forces[:, self.end_effector_idx, :], dim=-1)
             self.ee_in_contact = torch.maximum(self.ee_in_contact, (substep_force > 0.1).float())
             # 滑块加速度: 子步间速度差 / 子步时间步长
             current_slider_vel = self.dof_vel[:, self.slider_dof_idx]
@@ -115,6 +115,10 @@ class FallArm(BaseTask):
         return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
 
     def post_physics_step(self):
+        if torch.isnan(self.dof_pos).any():
+            print("PHYSICS EXPLODED: dof_pos NaN")
+        if torch.isnan(self.dof_vel).any():
+            print("PHYSICS EXPLODED: dof_vel NaN")
         # 检查是否需要终止 self.check_termination()
         # 计算奖励 self.compute_reward()
         # 重置需要终止的环境 self.reset_idx(env_ids)
@@ -126,7 +130,7 @@ class FallArm(BaseTask):
         self.real_episode_length_buf += 1
 
         # 末端执行器位置 (debug viz + 奖励函数共用)
-        self.end_effector_pos[:] = self.rigid_body_states[:, self.end_idx, :3]
+        self.end_effector_pos[:] = self.rigid_body_states[:, self.end_effector_idx, :3]
 
         # 接触检测 & 回合级统计量已在 decimation 子步循环中完成累积
 
@@ -194,22 +198,37 @@ class FallArm(BaseTask):
         dof_props_asset = self.gym.get_asset_dof_properties(robot_asset)
         rigid_shape_props_asset = self.gym.get_asset_rigid_shape_properties(robot_asset)
 
+        print("Bodies:", self.gym.get_asset_rigid_body_count(robot_asset))
+        print("DOFs:", self.gym.get_asset_dof_count(robot_asset))
+        print("Joints:", self.gym.get_asset_joint_count(robot_asset))
+        # Also print names for easier debugging (fall back safely if not available)
+        try:
+            body_names_dbg = self.gym.get_asset_rigid_body_names(robot_asset)
+            print("Body names:", body_names_dbg)
+        except Exception as e:
+            print("Body names: unavailable -", e)
+        try:
+            dof_names_dbg = self.gym.get_asset_dof_names(robot_asset)
+            print("DOF names:", dof_names_dbg)
+        except Exception as e:
+            print("DOF names: unavailable -", e)
+        # joint names API may not exist on all gym versions
+        if hasattr(self.gym, 'get_asset_joint_names'):
+            try:
+                joint_names_dbg = self.gym.get_asset_joint_names(robot_asset)
+                print("Joint names:", joint_names_dbg)
+            except Exception as e:
+                print("Joint names: unavailable -", e)
+        else:
+            print("Joint names: API not available in this gym build")
+
         body_names = self.gym.get_asset_rigid_body_names(robot_asset)
         self.dof_names = self.gym.get_asset_dof_names(robot_asset)
         self.num_bodies = len(body_names)
         self.num_dofs = len(self.dof_names)
 
-        # 计算 slider DOF 索引和 arm_dof_indices，
-        # 以便后续在 _process_dof_props 中使用（该函数在创建 env 循环中被调用）
-        try:
-            self.slider_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_root' in n)
-        except StopIteration:
-            self.slider_dof_idx = None
-        # 默认将 arm_dof_indices 设置为除了 slider 的所有 DOF（若 slider 未找到则包含全部）
-        if self.slider_dof_idx is not None:
-            self.arm_dof_indices = [i for i in range(self.num_dofs) if i != self.slider_dof_idx]
-        else:
-            self.arm_dof_indices = [i for i in range(self.num_dofs)]
+        self.slider_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_root' in n)
+        self.arm_dof_indices = [i for i in range(self.num_dofs) if i != self.slider_dof_idx]
 
         # 惩罚和终止条件
         penalized_contact_names = []
@@ -348,7 +367,7 @@ class FallArm(BaseTask):
         self.arm_dof_indices = [i for i in range(self.num_dofs) if i != self.slider_dof_idx]
         self.shoulder_pitch_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_pitch' in n)
         self.elbow_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'elbow' in n)
-        self.end_idx = self.end_indices[0].item()
+        self.end_effector_idx = self.end_indices[0].item()
 
     def _get_env_origins(self):
         # 为每个机器人实例分配一个不重叠的初始位置
@@ -400,6 +419,11 @@ class FallArm(BaseTask):
 
     def _process_dof_props(self, props, env_id):
         if env_id == 0:
+            print("DOF limits:")
+            for i, name in enumerate(self.dof_names):
+                lower = props['lower'][i].item()
+                upper = props['upper'][i].item()
+                print(name, lower, upper)
             # 位置限制: 所有 DOF
             self.dof_pos_limits = torch.zeros(len(props), 2, dtype=torch.float, device=self.device, requires_grad=False)
             for i in range(len(props)):
@@ -443,18 +467,20 @@ class FallArm(BaseTask):
 
     def _init_buffers(self):
         # ---------- GPU 状态张量 ----------
+        actor_root_state = self.gym.acquire_actor_root_state_tensor(self.sim)
         dof_state = self.gym.acquire_dof_state_tensor(self.sim)
         net_contact_forces = self.gym.acquire_net_contact_force_tensor(self.sim)
         rigid_body_state = self.gym.acquire_rigid_body_state_tensor(self.sim)
         self.gym.refresh_dof_state_tensor(self.sim)
+        self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_net_contact_force_tensor(self.sim)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
 
         # ---------- 包装为 PyTorch 张量 ----------
         self.dof_state = gymtorch.wrap_tensor(dof_state)
         self.dof_states = self.dof_state.view(self.num_envs, self.num_dofs, 2)
-        self.dof_pos = self.dof_states[..., 0]
-        self.dof_vel = self.dof_states[..., 1]
+        self.dof_pos = self.dof_state.view(self.num_envs, self.num_dofs, 2)[..., 0]
+        self.dof_vel = self.dof_state.view(self.num_envs, self.num_dofs, 2)[..., 1]
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
 
         self.contact_forces = gymtorch.wrap_tensor(net_contact_forces).view(self.num_envs, -1, 3)
@@ -466,6 +492,14 @@ class FallArm(BaseTask):
         if hasattr(self.cfg.init_state, 'drop_height_range'):
             self.drop_height_min = self.cfg.init_state.drop_height_range[0]
             self.drop_height_max = self.cfg.init_state.drop_height_range[1]
+
+        # ---------- 观测量 ----------
+        self.obs_buf = torch.zeros(
+            self.num_envs,
+            self.actor_proprioceptive_obs_length,
+            device=self.device,
+            dtype=torch.float
+        )
 
         # ---------- 通用 buffer ----------
         # 仿真步数计数器
@@ -507,9 +541,11 @@ class FallArm(BaseTask):
         self.shoulder_root_height = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
 
         # 动作缩放
-        self.action_rescale = self.cfg.control.action_scale * torch.ones(
-            self.num_envs, dtype=torch.float, device=self.device, requires_grad=False
-        ).unsqueeze(1)
+        self.action_rescale = torch.full(
+            (self.num_envs, 1),
+            self.cfg.control.action_scale,
+            device=self.device
+        )
         # 模拟延迟
         self.delay_buffer = torch.zeros(self.cfg.domain_rand.max_delay_timesteps, self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
 
@@ -621,11 +657,12 @@ class FallArm(BaseTask):
             self.episode_sums[name] += rew
 
         # 异常终止 → task 组乘零归零 + 施加惩罚
-        abnormal_termination = self._reward_termination()  # 异常终止=1, 正常=0
-        survival_mask = 1.0 - abnormal_termination          # 异常终止=0, 正常=1
+        abnormal_termination = self._reward_termination()  # 异常终止: bool mask
+        # 将布尔掩码转换为浮点掩码; 若为 True 表示异常终止 -> 生存 mask 为 0.0
+        survival_mask = (~abnormal_termination).float()
         self.rew_buf[:, task_group_index] *= survival_mask
         # termination scale 控制异常终止的惩罚力度 (负值 → 惩罚)
-        termination_rew = abnormal_termination * self.reward_scales['termination']
+        termination_rew = abnormal_termination.float() * self.reward_scales['termination']
         self.rew_buf[:, task_group_index] += termination_rew
         self.episode_sums['termination'] += termination_rew
 
@@ -696,6 +733,13 @@ class FallArm(BaseTask):
     # =====================================================================
 
     def compute_observations(self):
+        if torch.isnan(self.dof_pos).any():
+            print("NaN in dof_pos")
+        if torch.isnan(self.dof_vel).any():
+            print("NaN in dof_vel")
+        if torch.isnan(self.actions).any():
+            print("NaN in actions")
+
         arm_dof_pos = (self.dof_pos[:, self.arm_dof_indices] - self.default_dof_pos[:, self.arm_dof_indices]) * self.obs_scales.dof_pos
         arm_dof_vel = self.dof_vel[:, self.arm_dof_indices] * self.obs_scales.dof_vel
         arm_actions = self.actions
@@ -705,10 +749,14 @@ class FallArm(BaseTask):
             self.action_rescale + (torch.rand_like(self.action_rescale) - 0.5) * 0.05,
         ], dim=-1)
 
+        if torch.isnan(current_obs).any():
+            print("NaN in current_obs")
+
         if self.add_noise:
             current_obs += (2 * torch.rand_like(current_obs) - 1) * self.noise_scale_vec
 
         self.obs_buf = torch.cat((self.obs_buf[:, self.num_one_step_obs:self.actor_proprioceptive_obs_length], current_obs), dim=-1)
+        self.obs_buf = torch.nan_to_num(self.obs_buf, 0.0)
 
     def _get_noise_scale_vec(self, cfg):
         # 构建与观测维度一致的噪声缩放向量 (13维)
@@ -756,6 +804,10 @@ class FallArm(BaseTask):
             )
             self.reset_buf |= dof_vel_exceeded
             self.reset_buf |= slider_vel_exceeded
+            # slider 位置低于阈值时终止
+            if hasattr(self.cfg.limitation, 'slider_pos_min') and self.cfg.limitation.slider_pos_min is not None:
+                slider_pos_below = (self.dof_pos[:, self.slider_dof_idx] < float(self.cfg.limitation.slider_pos_min))
+                self.reset_buf |= slider_pos_below
 
     # =====================================================================
     #                           环境重置
@@ -806,10 +858,20 @@ class FallArm(BaseTask):
 
     def _reset_dofs(self, env_ids):
         # ---- 滑块关节: 仅偏移, 从 drop_height_range 直接采样 (不乘缩放) ----
-        self.dof_pos[env_ids, self.slider_dof_idx] = torch_rand_float(
+        slider_pos = torch_rand_float(
             self.drop_height_min, self.drop_height_max,
             (len(env_ids), 1), device=self.device
         ).squeeze(1)
+        # ---- 超限检测 ----
+        slider_lower = self.dof_pos_limits[self.slider_dof_idx, 0]
+        slider_upper = self.dof_pos_limits[self.slider_dof_idx, 1]
+        if torch.any(slider_pos < slider_lower) or torch.any(slider_pos > slider_upper):
+            print("WARNING: slider initial pos exceeds limits")
+            print("slider_pos:", slider_pos[:5])
+            print("limit:", slider_lower.item(), slider_upper.item())
+        # ---- 强制 clamp ----
+        slider_pos = torch.clip(slider_pos, slider_lower, slider_upper)
+        self.dof_pos[env_ids, self.slider_dof_idx] = slider_pos
 
         # ---- 手臂关节: 缩放 × default + 偏移 ----
         arm_default = self.default_dof_pos[:, self.arm_dof_indices]  # (1, num_real_dofs)
@@ -827,12 +889,23 @@ class FallArm(BaseTask):
             arm_lower = self.dof_pos_limits[self.arm_dof_indices, 0]
             arm_upper = self.dof_pos_limits[self.arm_dof_indices, 1]
             init_arm_pos = torch.clip(init_arm_pos, arm_lower, arm_upper)
+            if torch.isnan(init_arm_pos).any():
+                print("NaN in init_arm_pos")
+            if torch.any(init_arm_pos < arm_lower) or torch.any(init_arm_pos > arm_upper):
+                print("WARNING: arm pos exceeds limits")
         else:
             init_arm_pos = arm_default * torch_rand_float(
                 0.9, 1.1, (len(env_ids), self.num_real_dofs), device=self.device
             )
 
         self.dof_pos[env_ids.unsqueeze(1), self.arm_dof_indices] = init_arm_pos
+        # ---- 最终安全检查 ----
+        if torch.isnan(self.dof_pos[env_ids]).any():
+            print("NaN detected in dof_pos after reset")
+        lower = self.dof_pos_limits[:, 0]
+        upper = self.dof_pos_limits[:, 1]
+        if torch.any(self.dof_pos[env_ids] < lower) or torch.any(self.dof_pos[env_ids] > upper):
+            print("WARNING: dof_pos exceeds limits after reset")
 
         # 速度清零
         self.dof_vel[env_ids] = 0.0
@@ -844,6 +917,7 @@ class FallArm(BaseTask):
             gymtorch.unwrap_tensor(env_ids_int32),
             len(env_ids_int32),
         )
+        self.gym.refresh_dof_state_tensor(self.sim)
 
     def _update_force_curriculum(self, env_ids):
         # 课程学习: 根据回合表现逐步降低辅助, 增加任务难度
@@ -879,15 +953,7 @@ class FallArm(BaseTask):
     # =====================================================================
 
     def _draw_debug_vis(self):
-        self.gym.clear_lines(self.viewer)
-        self.gym.refresh_rigid_body_state_tensor(self.sim)
-        sphere_geom = gymutil.WireframeSphereGeometry(0.03, 8, 8, None, color=(0, 1, 0))
-        for i in range(min(self.num_envs, 10)):
-            ee_pos = self.end_effector_pos[i].cpu().numpy()
-            sphere_pose = gymapi.Transform(
-                gymapi.Vec3(ee_pos[0], ee_pos[1], ee_pos[2]), r=None
-            )
-            gymutil.draw_lines(sphere_geom, self.gym, self.viewer, self.envs[i], sphere_pose)
+        return
 
     # =====================================================================
     #                         奖励函数

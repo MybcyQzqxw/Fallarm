@@ -43,7 +43,7 @@ DEFAULT_JOINT_LIMITS = {
 # 格式: 'joint_keyword': (lower_m, upper_m, effort_N, velocity_m/s)
 # 注意: 单位直接为米/牛顿/米每秒, 不做角度转换
 PRISMATIC_JOINT_LIMITS = {
-    'left_shoulder_root': (0, 1, 0, 0),
+    'left_shoulder_root': (0, 1, 120, 20),
 }
 
 # ==================== 关节 Origin 配置 ====================

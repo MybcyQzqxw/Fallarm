@@ -51,7 +51,7 @@
     <parent link="base_framework" />
     <child link="left_shoulder_root_link" />
     <axis xyz="0 0 1" />
-    <limit lower="0" upper="1" effort="0" velocity="0" />
+    <limit lower="0" upper="1" effort="120" velocity="20" />
   </joint>
   <link name="left_shoulder_pitch_link">
     <inertial>

@@ -40,7 +40,7 @@ class ActorCritic(nn.Module):
     def __init__(self,  num_actor_obs,
                         num_critic_obs,
                         num_actions,
-                        num_critics=1,
+                        num_critics,
                         actor_hidden_dims=[256, 256, 256],
                         critic_hidden_dims=[256, 256, 256],
                         activation='elu',
@@ -62,6 +62,7 @@ class ActorCritic(nn.Module):
         for l in range(len(actor_hidden_dims)):
             if l == len(actor_hidden_dims) - 1:
                 actor_layers.append(nn.Linear(actor_hidden_dims[l], num_actions))
+                actor_layers.append(nn.Tanh())
             else:
                 actor_layers.append(nn.Linear(actor_hidden_dims[l], actor_hidden_dims[l + 1]))
                 actor_layers.append(activation)
@@ -83,25 +84,17 @@ class ActorCritic(nn.Module):
 
         self.num_critics = num_critics
 
-        print(f"Actor MLP: {self.actor}")
-        print(f"Critic MLP ({num_critics} heads): {self.critics[0]}")
-
         # Action noise
         self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
         self.distribution = None
         # disable args validation for speedup
         Normal.set_default_validate_args = False
-        
-        # seems that we get better performance without init
-        # self.init_memory_weights(self.memory_a, 0.001, 0.)
-        # self.init_memory_weights(self.memory_c, 0.001, 0.)
 
     @staticmethod
     # not used at the moment
     def init_weights(sequential, scales):
         [torch.nn.init.orthogonal_(module.weight, gain=scales[idx]) for idx, module in
          enumerate(mod for mod in sequential if isinstance(mod, nn.Linear))]
-
 
     def reset(self, dones=None):
         pass
@@ -122,8 +115,18 @@ class ActorCritic(nn.Module):
         return self.distribution.entropy().sum(dim=-1)
 
     def update_distribution(self, observations):
+        if torch.isnan(observations).any():
+            print("OBS NAN DETECTED")
+            idx = torch.isnan(observations).nonzero()
+            print("nan index:", idx[:20])   # 打印前20个
+            print("obs shape:", observations.shape)
+            # 打印第一个有nan的环境
+            env_id = idx[0][0]
+            print("env with nan:", env_id)
+            print("obs:", observations[env_id])
+            exit()
         mean = self.actor(observations)
-        self.distribution = Normal(mean, mean*0. + self.std)
+        self.distribution = Normal(mean, mean * 0. + self.std)
 
     def act(self, observations, **kwargs):
         self.update_distribution(observations)
@@ -137,8 +140,9 @@ class ActorCritic(nn.Module):
         return actions_mean
 
     def evaluate(self, critic_observations, **kwargs):
-        values = torch.cat([critic(critic_observations) for critic in self.critics], dim=-1)
+        values = torch.concat([critic(critic_observations) for critic in self.critics], dim=-1)
         return values
+
 
 def get_activation(act_name):
     if act_name == "elu":

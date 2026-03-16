@@ -9,18 +9,18 @@ class FallArmCfg(BaseConfig):
         ang_vel = [0.0, 0.0, 0.0]
 
         default_joint_angles = {
-            'left_shoulder_root_joint': 0.7,     # 初始高度 0.7m (滑块)
-            'left_shoulder_pitch_joint': 0.0,    # 肩部俯仰: 中立位
-            'left_shoulder_roll_joint': 0.0,     # 肩部横滚: 中立位
-            'left_shoulder_yaw_joint': 0.0,      # 肩部偏航: 中立位
-            'left_elbow_joint': 0.5,             # 肘关节: 微弯(准备着地)
+            'left_shoulder_root_joint': 0.8,
+            'left_shoulder_pitch_joint': 0.0,
+            'left_shoulder_roll_joint': 0.0,
+            'left_shoulder_yaw_joint': 0.0,
+            'left_elbow_joint': 0.7,
         }
 
         # 坠落高度随机范围 [min, max] (m), 用于 reset 时随机化 slider_joint 位置
-        drop_height_range = [0.5, 0.8]
+        drop_height_range = [0.8, 0.9]
 
     class env:
-        num_envs = 4096
+        num_envs = 1024
         num_dofs = 5
         num_real_dofs = 4
         num_actions = 4
@@ -29,7 +29,7 @@ class FallArmCfg(BaseConfig):
         num_one_step_observations = 13
         num_actor_history = 6  # 历史观测步数
         num_observations = num_actor_history * num_one_step_observations
-        episode_length_s = 10.0
+        episode_length_s = 5.0
 
         num_privileged_obs = None
         env_spacing = 3.0
@@ -53,8 +53,8 @@ class FallArmCfg(BaseConfig):
         decimation = 4       # 策略频率 = 200Hz / 4 = 50Hz
 
         # 导轨滑块摩擦参数 (无策略控制, 仅物理模拟)
-        slider_viscous_friction = 5.0   # [N·s/m] 粘性摩擦系数 (与速度成正比)
-        slider_coulomb_friction = 1.0   # [N]     库仑摩擦力 (恒定干摩擦)
+        slider_viscous_friction = 1.0   # [N·s/m] 粘性摩擦系数 (与速度成正比)
+        slider_coulomb_friction = 0.1   # [N]     库仑摩擦力 (恒定干摩擦)
 
     class terrain:
         mesh_type = 'plane'
@@ -105,7 +105,7 @@ class FallArmCfg(BaseConfig):
         # _create_envs 中初始化下面 5 个
         # 负载质量
         randomize_payload_mass = use_random
-        payload_mass_range = [-2, 2]
+        payload_mass_range = [-1, 1]
         # 质心偏移
         randomize_com_displacement = use_random
         com_displacement_range = [-0.03, 0.03]
@@ -144,6 +144,7 @@ class FallArmCfg(BaseConfig):
     class limitation:
         dof_vel_limit = 300.0           # [rad/s] 关节角速度上限
         slider_vel_limit = 20.0         # [m/s] 导轨速度上限
+        slider_pos_min = 0.2           # [m] 导轨位置下限
         soft_dof_pos_limit = 0.9  # 软关节位置限制（安全范围比例）
         soft_dof_vel_limit = 0.9  # 软关节速度限制（安全范围比例）
 
@@ -165,9 +166,9 @@ class FallArmCfg(BaseConfig):
         low_slider_acc_threshold = 40
         low_slider_acc_margin = 20
         low_slider_acc_value_at_margin = 0.01
-        high_min_shoulder_root_height_threshold = 0.5
-        high_min_shoulder_root_height_margin = 0.3
-        high_min_shoulder_root_height_value_at_margin = 0.001
+        high_min_shoulder_root_height_threshold = 0.55
+        high_min_shoulder_root_height_margin = 0.15
+        high_min_shoulder_root_height_value_at_margin = 0.01
 
         class scales:
             termination = -1
@@ -182,19 +183,19 @@ class FallArmCfg(BaseConfig):
 
         # target reward
         arm_pose_at_contact_sigma = 2.0
-        high_shoulder_root_height_at_contact_threshold = 0.3
-        high_shoulder_root_height_at_contact_margin = 0.2
-        high_shoulder_root_height_at_contact_value_at_margin = 0.01
         low_slider_acc_at_contact_threshold = 40
         low_slider_acc_at_contact_margin = 20
         low_slider_acc_at_contact_value_at_margin = 0.01
+        high_shoulder_root_height_at_contact_threshold = 0.55
+        high_shoulder_root_height_at_contact_margin = 0.15
+        high_shoulder_root_height_at_contact_value_at_margin = 0.01
 
         class scales:
             # regularization reward
-            regu_dof_acc = -2.5e-5
+            regu_dof_acc = -2.5e-7
             regu_dof_vel = -1e-3
-            regu_action_rate = -0.5
-            regu_smoothness = -0.1
+            regu_action_rate = -5e-3
+            regu_smoothness = -1e-3
             regu_torques = -1e-5
             regu_joint_power = -1e-4
             regu_dof_pos_limits = -2.5
@@ -203,7 +204,7 @@ class FallArmCfg(BaseConfig):
             # style reward
             style_low_shoulder_pitch_torque = 3.0
             style_low_elbow_torque = 3.0
-            style_penalised_contact = -10.0
+            style_penalised_contact = -100
 
             # target reward
             target_arm_pose_at_contact = 5
@@ -228,8 +229,8 @@ class FallArmCfg(BaseConfig):
 
     class viewer:
         ref_env = 0
-        pos = [10.0, 0.0, 6.0]  # [m]
-        lookat = [11.0, 5.0, 3.0]  # [m]
+        pos = [5.0, 10.0, 2.0]
+        lookat = [0.0, 0.0, 0.0]
 
     class sim:
         dt = 0.005

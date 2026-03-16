@@ -53,9 +53,9 @@ class PPO:
                  schedule="fixed",
                  desired_kl=0.01,
                  device='cpu',
-                 value_smoothness_coef=0.1,
-                 smoothness_upper_bound=1.0,
-                 smoothness_lower_bound=0.0,
+                value_smoothness_coef=0.1,
+                smoothness_upper_bound=1.0,
+                smoothness_lower_bound=0.0,
                  ):
 
         self.device = device
@@ -118,7 +118,9 @@ class PPO:
             self.transition.rewards += self.gamma * torch.squeeze(self.transition.values * infos['time_outs'].unsqueeze(1).to(self.device), 1)
 
         # Record the transition
-        self.storage.add_transitions(self.transition)
+        if torch.norm(self.transition.observations).mean() > 1e-4:
+            self.storage.add_transitions(self.transition)
+
         self.transition.clear()
         self.actor_critic.reset(dones)
     
@@ -135,7 +137,6 @@ class PPO:
             generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
         for obs_batch, critic_obs_batch, next_obs_batch, cont_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, \
             old_mu_batch, old_sigma_batch, hid_states_batch, masks_batch in generator:
-
 
                 self.actor_critic.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0])
                 actions_log_prob_batch = self.actor_critic.get_actions_log_prob(actions_batch)
@@ -159,7 +160,6 @@ class PPO:
                         for param_group in self.optimizer.param_groups:
                             param_group['lr'] = self.learning_rate
 
-
                 # Surrogate loss
                 ratio = torch.exp(actions_log_prob_batch - torch.squeeze(old_actions_log_prob_batch))
                 surrogate = -torch.squeeze(advantages_batch) * ratio
@@ -180,7 +180,7 @@ class PPO:
                 loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
 
                 # Smooth loss
-                epsilon = self.smoothness_lower_bound / (self.smoothness_upper_bound - self.smoothness_lower_bound + 1e-8)
+                epsilon = self.smoothness_lower_bound / (self.smoothness_upper_bound - self.smoothness_lower_bound)
                 policy_smooth_coef = self.smoothness_upper_bound * epsilon; value_smooth_coef = self.value_smoothness_coef * policy_smooth_coef
 
                 mix_weights = cont_batch * (torch.rand_like(cont_batch) - 0.5) * 2.0
@@ -189,7 +189,9 @@ class PPO:
                 policy_smooth_loss = torch.square(torch.norm(mu_batch - self.actor_critic.act_inference(mix_obs_batch), dim=-1)).mean()
                 value_smooth_loss = torch.square(torch.norm(value_batch - self.actor_critic.evaluate(mix_obs_batch), dim=-1)).mean()
                 smooth_loss = policy_smooth_coef * policy_smooth_loss + value_smooth_coef * value_smooth_loss
-
+                with torch.inference_mode():
+                    action_smoothness = torch.norm(mu_batch - self.actor_critic.act_inference(next_obs_batch), dim=-1).mean()
+                    
                 loss += smooth_loss
 
                 # Gradient step

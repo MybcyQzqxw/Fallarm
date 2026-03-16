@@ -93,7 +93,7 @@ class FallArm(BaseTask):
 
             # 每个子步刷新接触力, 累积峰值和接触状态
             self.gym.refresh_net_contact_force_tensor(self.sim)
-            substep_force = torch.norm(self.contact_forces[:, self.end_effector_idx, :], dim=-1)
+            substep_force = torch.norm(self.contact_forces[:, self.end_idx, :], dim=-1)
             self.ee_in_contact = torch.maximum(self.ee_in_contact, (substep_force > 0.1).float())
             # 滑块加速度: 子步间速度差 / 子步时间步长
             current_slider_vel = self.dof_vel[:, self.slider_dof_idx]
@@ -101,7 +101,8 @@ class FallArm(BaseTask):
             self.max_slider_acc = torch.maximum(self.max_slider_acc, substep_slider_acc)
             self.step_max_slider_acc = torch.maximum(self.step_max_slider_acc, substep_slider_acc)
             prev_slider_vel = current_slider_vel.clone()
-            self.max_shoulder_pitch_torque = torch.maximum(self.max_shoulder_pitch_torque, torch.abs(self.torques[:, self.shoulder_pitch_dof_idx]))
+            self.max_shoulder_pitch_torque = torch.maximum(self.max_shoulder_pitch_torque, torch.abs(self.torques[:, self.shoulder_pitch_idx]))
+            # use DOF-index for accessing torques (self.torques is DOF-indexed)
             self.max_elbow_torque = torch.maximum(self.max_elbow_torque, torch.abs(self.torques[:, self.elbow_dof_idx]))
             self.min_shoulder_root_height = torch.minimum(self.min_shoulder_root_height, self.dof_pos[:, self.slider_dof_idx])
 
@@ -125,7 +126,7 @@ class FallArm(BaseTask):
         self.real_episode_length_buf += 1
 
         # 末端执行器位置 (debug viz + 奖励函数共用)
-        self.end_effector_pos[:] = self.rigid_body_states[:, self.end_effector_idx, :3]
+        self.end_effector_pos[:] = self.rigid_body_states[:, self.end_idx, :3]
 
         # 接触检测 & 回合级统计量已在 decimation 子步循环中完成累积
 
@@ -197,6 +198,18 @@ class FallArm(BaseTask):
         self.dof_names = self.gym.get_asset_dof_names(robot_asset)
         self.num_bodies = len(body_names)
         self.num_dofs = len(self.dof_names)
+
+        # 计算 slider DOF 索引和 arm_dof_indices，
+        # 以便后续在 _process_dof_props 中使用（该函数在创建 env 循环中被调用）
+        try:
+            self.slider_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_root' in n)
+        except StopIteration:
+            self.slider_dof_idx = None
+        # 默认将 arm_dof_indices 设置为除了 slider 的所有 DOF（若 slider 未找到则包含全部）
+        if self.slider_dof_idx is not None:
+            self.arm_dof_indices = [i for i in range(self.num_dofs) if i != self.slider_dof_idx]
+        else:
+            self.arm_dof_indices = [i for i in range(self.num_dofs)]
 
         # 惩罚和终止条件
         penalized_contact_names = []
@@ -333,9 +346,9 @@ class FallArm(BaseTask):
         # ---------- DOF / rigid body 标量索引 (动态查找, 不假设顺序) ----------
         self.slider_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_root' in n)
         self.arm_dof_indices = [i for i in range(self.num_dofs) if i != self.slider_dof_idx]
-        self.shoulder_pitch_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_pitch' in n)
+        self.shoulder_pitch_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_pitch' in n)
         self.elbow_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'elbow' in n)
-        self.end_effector_idx = self.end_indices[0].item()
+        self.end_idx = self.end_indices[0].item()
 
     def _get_env_origins(self):
         # 为每个机器人实例分配一个不重叠的初始位置
@@ -865,16 +878,7 @@ class FallArm(BaseTask):
     #                         相机与可视化
     # =====================================================================
 
-    def lookat(self, i):
-        """重写跟随相机: 追踪滑块高度而非固定基座"""
-        slider_height = self.dof_pos[i, self.slider_dof_idx].item()
-        look_at_pos = self.env_origins[i].clone()
-        look_at_pos[2] = slider_height
-        cam_pos = look_at_pos + self.lookat_vec
-        self.set_camera(cam_pos, look_at_pos)
-
     def _draw_debug_vis(self):
-        """可视化末端执行器位置 (绿色球体)"""
         self.gym.clear_lines(self.viewer)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
         sphere_geom = gymutil.WireframeSphereGeometry(0.03, 8, 8, None, color=(0, 1, 0))

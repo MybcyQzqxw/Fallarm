@@ -1,38 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: BSD-3-Clause
-# 
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are met:
-#
-# 1. Redistributions of source code must retain the above copyright notice, this
-# list of conditions and the following disclaimer.
-#
-# 2. Redistributions in binary form must reproduce the above copyright notice,
-# this list of conditions and the following disclaimer in the documentation
-# and/or other materials provided with the distribution.
-#
-# 3. Neither the name of the copyright holder nor the names of its
-# contributors may be used to endorse or promote products derived from
-# this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Copyright (c) 2021 ETH Zurich, Nikita Rudin
-
 import torch
 from torch import Tensor
 import numpy as np
 from isaacgym.torch_utils import quat_apply, normalize
 from typing import Tuple
+
 
 # @ torch.jit.script
 def quat_apply_yaw(quat, vec):
@@ -41,16 +12,43 @@ def quat_apply_yaw(quat, vec):
     quat_yaw = normalize(quat_yaw)
     return quat_apply(quat_yaw, vec)
 
+
 # @ torch.jit.script
 def wrap_to_pi(angles):
-    angles %= 2*np.pi
-    angles -= 2*np.pi * (angles > np.pi)
+    angles %= 2 * np.pi
+    angles -= 2 * np.pi * (angles > np.pi)
     return angles
+
 
 # @ torch.jit.script
 def torch_rand_sqrt_float(lower, upper, shape, device):
     # type: (float, float, Tuple[int, int], str) -> Tensor
-    r = 2*torch.rand(*shape, device=device) - 1
-    r = torch.where(r<0., -torch.sqrt(-r), torch.sqrt(r))
-    r =  (r + 1.) / 2.
+    r = 2 * torch.rand(*shape, device=device) - 1
+    r = torch.where(r < 0., -torch.sqrt(-r), torch.sqrt(r))
+    r = (r + 1.) / 2.
     return (upper - lower) * r + lower
+
+
+# @torch.jit.script
+def torch_rand_float(lower, upper, shape, device):
+    return (upper - lower) * torch.rand(*shape, device=device) + lower
+
+
+# @torch.jit.script
+def sigmoid_reward(x, value_at_1):
+    scale = np.sqrt(-2 * np.log(value_at_1))
+    return torch.exp(-0.5 * (x * scale) ** 2)
+
+
+# @torch.jit.script
+def tolerance(x, bounds=(0.0, 0.0), margin=0.0, value_at_margin=0.1):
+    lower, upper = bounds
+    assert lower < upper
+    assert margin >= 0
+    in_bounds = torch.logical_and(lower <= x, x <= upper)
+    if margin == 0:
+        value = torch.where(in_bounds, 1.0, 0.0)
+    else:
+        d = torch.where(x < lower, lower - x, x - upper) / margin
+        value = torch.where(in_bounds, 1.0, sigmoid_reward(d.double(), value_at_margin))
+    return value

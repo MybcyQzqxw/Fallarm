@@ -1,40 +1,18 @@
-"""
-FallArm 环境类 — 直接继承 BaseTask，不依赖 LeggedRobot
+# 观测空间 (13维):
+#     [0:4]   arm_dof_pos - default  (shoulder_pitch/roll/yaw + elbow)
+#     [4:8]   arm_dof_vel            (shoulder_pitch/roll/yaw + elbow)
+#     [8:12]  arm_actions            (shoulder_pitch/roll/yaw + elbow)
+#     [12:13] action_rescale         (动作缩放系数, 带小噪声)
 
-任务描述:
-    一条4自由度手臂（肩部3DOF + 肘部1DOF）根部挂载在垂直导轨上，
-    从一定高度自由坠落。目标是训练缓冲着地控制策略:
-    - 末端执行器先着地
-    - 通过肘关节的主动顺应控制吸收冲击能量
-    - 既不硬着陆 (冲击力过大) 也不软着陆 (肘关节折叠到限位)
-
-DOF 布局 (共5个, 与URDF一致):
-    [0] slider_joint           - prismatic, z轴, 被动 (PD增益=0)
-    [1] shoulder_pitch_joint   - revolute, 肩俯仰
-    [2] shoulder_roll_joint    - revolute, 肩横滚
-    [3] shoulder_yaw_joint     - revolute, 肩偏航
-    [4] elbow_joint            - revolute, 肘弯曲
-
-观测空间 (24维):
-    [0:5]   dof_pos - default  (含slider高度偏差)
-    [5:10]  dof_vel            (含slider下落速度)
-    [10:15] 上一步动作
-    [15:18] 重力方向 (基座坐标系下)
-    [18:19] 末端执行器高度
-    [19:22] 末端执行器速度(xyz)
-    [22:23] 归一化的回合时间
-    [23:24] 末端是否触地 (contact phase)
-
-动作空间 (5维):
-    [0] slider (无效, 增益为0, step中显式清零)
-    [1] shoulder_pitch 目标角偏移
-    [2] shoulder_roll  目标角偏移
-    [3] shoulder_yaw   目标角偏移
-    [4] elbow          目标角偏移
-"""
+# 动作空间 (4维, 仅手臂关节):
+#     [0] shoulder_pitch 目标角偏移
+#     [1] shoulder_roll  目标角偏移
+#     [2] shoulder_yaw   目标角偏移
+#     [3] elbow          目标角偏移
 
 import numpy as np
 import os
+import copy
 
 from isaacgym.torch_utils import *
 from isaacgym import gymtorch, gymapi, gymutil
@@ -45,26 +23,129 @@ from legged_gym import LEGGED_GYM_ROOT_DIR
 from legged_gym.envs.base.base_task import BaseTask
 from legged_gym.envs.fall_arm.fall_arm_config import FallArmCfg
 from legged_gym.utils.helpers import class_to_dict
+from legged_gym.utils.math import (
+    tolerance,
+    torch_rand_float,
+)
 
 
 class FallArm(BaseTask):
-    """落臂缓冲控制任务环境 — 直接继承 BaseTask"""
-
-    cfg: FallArmCfg
 
     def __init__(self, cfg: FallArmCfg, sim_params, physics_engine, sim_device, headless):
         self.cfg = cfg
         self.sim_params = sim_params
-        self.debug_viz = False
-        self.init_done = False
+        self.debug_viz = True
+        self.init_done = False  # 初始化flag
         self._parse_cfg(self.cfg)
+        self.num_dofs = cfg.env.num_dofs
+        self.num_real_dofs = cfg.env.num_real_dofs
+
+        # 初始化中包含一句 self.create_sim()
+        # self.create_sim() 中包含 self._create_envs()
         super().__init__(self.cfg, sim_params, physics_engine, sim_device, headless)
+
+        # 单步观测维度
+        self.num_one_step_obs = self.cfg.env.num_one_step_observations  # if not self.cfg.env.add_force else self.cfg.env.num_one_step_observations + 1
+        # 历史观测长度
+        self.actor_history_length = self.cfg.env.num_actor_history
+        # 总观测数 = 单步观测维度 * 历史观测长度
+        self.actor_proprioceptive_obs_length = self.num_one_step_obs * self.actor_history_length
 
         if not self.headless:
             self.set_camera(self.cfg.viewer.pos, self.cfg.viewer.lookat)
         self._init_buffers()
         self._prepare_reward_function()
-        self.init_done = True
+        self.init_done = True  # 初始化flag
+
+    # =====================================================================
+    #                         核心仿真流程
+    # =====================================================================
+
+    def step(self, actions):
+        clip_actions = self.cfg.normalization.clip_actions
+        self.actions = torch.clip(actions, -clip_actions, clip_actions).to(self.device)
+        self.render()
+
+        # 课程辅助力准备 (力值在 step 期间不变, 只需准备一次)
+        if self.cfg.curriculum.use_curriculum:
+            self.curriculum_forces[:] = 0
+            self.curriculum_forces[:, self.shoulder_root_index, 2] = self.force.squeeze(1)
+
+        # 每步开始前清零子步累积量
+        self.ee_in_contact[:] = 0.
+        self.step_max_slider_acc[:] = 0.
+        prev_slider_vel = self.dof_vel[:, self.slider_dof_idx].clone()
+
+        for _ in range(self.cfg.control.decimation):
+            self.torques = self._compute_torques(self.actions).view(self.torques.shape)
+            self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
+            # 课程辅助力: 竖直向上施加在 shoulder_root 上
+            if self.cfg.curriculum.use_curriculum:
+                self.gym.apply_rigid_body_force_tensors(
+                    self.sim,
+                    gymtorch.unwrap_tensor(self.curriculum_forces.view(-1, 3)),
+                    None, gymapi.ENV_SPACE
+                )
+            self.gym.simulate(self.sim)
+            if self.device == 'cpu':
+                self.gym.fetch_results(self.sim, True)
+            self.gym.refresh_dof_state_tensor(self.sim)
+
+            # 每个子步刷新接触力, 累积峰值和接触状态
+            self.gym.refresh_net_contact_force_tensor(self.sim)
+            substep_force = torch.norm(self.contact_forces[:, self.end_effector_idx, :], dim=-1)
+            self.ee_in_contact = torch.maximum(self.ee_in_contact, (substep_force > 0.1).float())
+            # 滑块加速度: 子步间速度差 / 子步时间步长
+            current_slider_vel = self.dof_vel[:, self.slider_dof_idx]
+            substep_slider_acc = torch.abs(current_slider_vel - prev_slider_vel) / self.sim_params.dt
+            self.max_slider_acc = torch.maximum(self.max_slider_acc, substep_slider_acc)
+            self.step_max_slider_acc = torch.maximum(self.step_max_slider_acc, substep_slider_acc)
+            prev_slider_vel = current_slider_vel.clone()
+            self.max_shoulder_pitch_torque = torch.maximum(self.max_shoulder_pitch_torque, torch.abs(self.torques[:, self.shoulder_pitch_dof_idx]))
+            self.max_elbow_torque = torch.maximum(self.max_elbow_torque, torch.abs(self.torques[:, self.elbow_dof_idx]))
+            self.min_shoulder_root_height = torch.minimum(self.min_shoulder_root_height, self.dof_pos[:, self.slider_dof_idx])
+
+        self.post_physics_step()
+
+        clip_obs = self.cfg.normalization.clip_observations
+        self.obs_buf = torch.clip(self.obs_buf, -clip_obs, clip_obs)
+        if self.privileged_obs_buf is not None:
+            self.privileged_obs_buf = torch.clip(self.privileged_obs_buf, -clip_obs, clip_obs)
+        return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
+
+    def post_physics_step(self):
+        # 检查是否需要终止 self.check_termination()
+        # 计算奖励 self.compute_reward()
+        # 重置需要终止的环境 self.reset_idx(env_ids)
+        # 计算观测值 self.compute_observations()
+        self.gym.refresh_rigid_body_state_tensor(self.sim)
+
+        self.episode_length_buf += 1
+        self.common_step_counter += 1
+        self.real_episode_length_buf += 1
+
+        # 末端执行器位置 (debug viz + 奖励函数共用)
+        self.end_effector_pos[:] = self.rigid_body_states[:, self.end_effector_idx, :3]
+
+        # 接触检测 & 回合级统计量已在 decimation 子步循环中完成累积
+
+        # 当前步 shoulder_root 高度 (用于每步奖励函数)
+        self.shoulder_root_height[:] = self.dof_pos[:, self.slider_dof_idx]
+
+        self.check_termination()
+        self.compute_reward()
+
+        # 记录历史 (在 reset 之前更新, 避免 reset 清零被覆盖)
+        self.last_last_actions[:] = self.last_actions[:]
+        self.last_actions[:] = self.actions[:]
+        self.last_dof_vel[:] = self.dof_vel[:]
+
+        env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
+        self.reset_idx(env_ids)
+        self.compute_observations()
+
+        if self.viewer and self.enable_viewer_sync and self.debug_viz:
+            self._draw_debug_vis()
 
     # =====================================================================
     #                       仿真 / 环境创建
@@ -73,11 +154,10 @@ class FallArm(BaseTask):
     def create_sim(self):
         """创建仿真、地面与所有环境实例"""
         self.up_axis_idx = 2  # z-up
-        self.sim = self.gym.create_sim(
-            self.sim_device_id, self.graphics_device_id,
-            self.physics_engine, self.sim_params
-        )
-        self._create_ground_plane()
+        self.sim = self.gym.create_sim(self.sim_device_id, self.graphics_device_id, self.physics_engine, self.sim_params)
+        mesh_type = self.cfg.terrain.mesh_type
+        if mesh_type == 'plane':
+            self._create_ground_plane()
         self._create_envs()
 
     def _create_ground_plane(self):
@@ -90,7 +170,6 @@ class FallArm(BaseTask):
         self.gym.add_ground(self.sim, plane_params)
 
     def _create_envs(self):
-        """加载 URDF 资产, 为每个环境创建 actor"""
         asset_path = self.cfg.asset.file.format(LEGGED_GYM_ROOT_DIR=LEGGED_GYM_ROOT_DIR)
         asset_root = os.path.dirname(asset_path)
         asset_file = os.path.basename(asset_path)
@@ -111,19 +190,15 @@ class FallArm(BaseTask):
         asset_options.disable_gravity = self.cfg.asset.disable_gravity
 
         robot_asset = self.gym.load_asset(self.sim, asset_root, asset_file, asset_options)
-        self.num_dof = self.gym.get_asset_dof_count(robot_asset)
-        self.num_bodies = self.gym.get_asset_rigid_body_count(robot_asset)
         dof_props_asset = self.gym.get_asset_dof_properties(robot_asset)
         rigid_shape_props_asset = self.gym.get_asset_rigid_shape_properties(robot_asset)
 
-        # 刚体 / 关节名称
         body_names = self.gym.get_asset_rigid_body_names(robot_asset)
         self.dof_names = self.gym.get_asset_dof_names(robot_asset)
         self.num_bodies = len(body_names)
         self.num_dofs = len(self.dof_names)
 
-        # 末端执行器 / 惩罚 / 终止 体名称
-        ee_names = [s for s in body_names if self.cfg.asset.foot_name in s]
+        # 惩罚和终止条件
         penalized_contact_names = []
         for name in self.cfg.asset.penalize_contacts_on:
             penalized_contact_names.extend([s for s in body_names if name in s])
@@ -132,47 +207,64 @@ class FallArm(BaseTask):
             termination_contact_names.extend([s for s in body_names if name in s])
 
         # 初始状态
-        base_init_state_list = (self.cfg.init_state.pos + self.cfg.init_state.rot +
-                                self.cfg.init_state.lin_vel + self.cfg.init_state.ang_vel)
-        self.base_init_state = to_torch(base_init_state_list, device=self.device, requires_grad=False)
         start_pose = gymapi.Transform()
-        start_pose.p = gymapi.Vec3(*self.base_init_state[:3])
+        start_pose.p = gymapi.Vec3(*self.cfg.init_state.pos)
 
-        # 网格布局
+        self.default_rigid_body_mass = torch.zeros(self.num_bodies, dtype=torch.float, device=self.device, requires_grad=False)
+        self.shoulder_root_index = next(i for i, name in enumerate(body_names) if 'shoulder_root' in name)
+
         self._get_env_origins()
         env_lower = gymapi.Vec3(0., 0., 0.)
         env_upper = gymapi.Vec3(0., 0., 0.)
-        self.actor_handles = []
         self.envs = []
+        self.actor_handles = []
+
+        if self.cfg.domain_rand.randomize_payload_mass:
+            self.payload = torch_rand_float(self.cfg.domain_rand.payload_mass_range[0], self.cfg.domain_rand.payload_mass_range[1], (self.num_envs, 1), device=self.device)
+        if self.cfg.domain_rand.randomize_com_displacement:
+            self.com_displacement = torch_rand_float(self.cfg.domain_rand.com_displacement_range[0], self.cfg.domain_rand.com_displacement_range[1], (self.num_envs, 3), device=self.device)
+            # xyz 方向上放大倍数
+            self.com_displacement[:, 0] = self.com_displacement[:, 0] * 4
+            self.com_displacement[:, 1] = self.com_displacement[:, 1] * 4
+            self.com_displacement[:, 2] = self.com_displacement[:, 2] * 2
 
         for i in range(self.num_envs):
-            env_handle = self.gym.create_env(
-                self.sim, env_lower, env_upper, int(np.sqrt(self.num_envs))
-            )
+            # env handle 创建
+            env_handle = self.gym.create_env(self.sim, env_lower, env_upper, int(np.sqrt(self.num_envs)))
+
+            # actor 初始位置设置
             pos = self.env_origins[i].clone()
             start_pose.p = gymapi.Vec3(*pos)
 
+            # 摩擦系数和恢复系数随机化
             rigid_shape_props = self._process_rigid_shape_props(rigid_shape_props_asset, i)
             self.gym.set_asset_rigid_shape_properties(robot_asset, rigid_shape_props)
-            actor_handle = self.gym.create_actor(
-                env_handle, robot_asset, start_pose,
-                self.cfg.asset.name, i, self.cfg.asset.self_collisions, 0
-            )
+
+            # actor handle 创建
+            actor_handle = self.gym.create_actor(env_handle, robot_asset, start_pose, self.cfg.asset.name, i, self.cfg.asset.self_collisions, 0)
+
+            # 关节属性处理
             dof_props = self._process_dof_props(dof_props_asset, i)
+
             self.gym.set_actor_dof_properties(env_handle, actor_handle, dof_props)
+
             body_props = self.gym.get_actor_rigid_body_properties(env_handle, actor_handle)
+
+            if i == 0:
+                self.default_com_shoulder_root = copy.deepcopy(body_props[self.shoulder_root_index].com)
+                for j in range(len(body_props)):
+                    self.default_rigid_body_mass[j] = body_props[j].mass
+
+            # 负载质量、质心偏移、连杆质量随机化
             body_props = self._process_rigid_body_props(body_props, i)
+
             self.gym.set_actor_rigid_body_properties(env_handle, actor_handle, body_props, recomputeInertia=True)
+
+            # 存储在 envs 和 actor_handles 中
             self.envs.append(env_handle)
             self.actor_handles.append(actor_handle)
 
-        # 刚体索引
-        self.ee_indices = torch.zeros(len(ee_names), dtype=torch.long, device=self.device, requires_grad=False)
-        for i in range(len(ee_names)):
-            self.ee_indices[i] = self.gym.find_actor_rigid_body_handle(
-                self.envs[0], self.actor_handles[0], ee_names[i]
-            )
-
+        # 下面开始录入各个连杆的索引
         self.penalised_contact_indices = torch.zeros(
             len(penalized_contact_names), dtype=torch.long, device=self.device, requires_grad=False
         )
@@ -189,8 +281,66 @@ class FallArm(BaseTask):
                 self.envs[0], self.actor_handles[0], termination_contact_names[i]
             )
 
+        base_names = [s for s in body_names if self.cfg.asset.base_name in s]
+        self.base_indices = torch.zeros(len(base_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(base_names)):
+            self.base_indices[i] = self.gym.find_actor_rigid_body_handle(
+                self.envs[0], self.actor_handles[0], base_names[i]
+            )
+
+        shoulder_root_names = [s for s in body_names if self.cfg.asset.shoulder_root_name in s]
+        self.shoulder_root_indices = torch.zeros(len(shoulder_root_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(shoulder_root_names)):
+            self.shoulder_root_indices[i] = self.gym.find_actor_rigid_body_handle(
+                self.envs[0], self.actor_handles[0], shoulder_root_names[i]
+            )
+
+        shoulder_pitch_names = [s for s in body_names if self.cfg.asset.shoulder_pitch_name in s]
+        self.shoulder_pitch_indices = torch.zeros(len(shoulder_pitch_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(shoulder_pitch_names)):
+            self.shoulder_pitch_indices[i] = self.gym.find_actor_rigid_body_handle(
+                self.envs[0], self.actor_handles[0], shoulder_pitch_names[i]
+            )
+
+        shoulder_roll_names = [s for s in body_names if self.cfg.asset.shoulder_roll_name in s]
+        self.shoulder_roll_indices = torch.zeros(len(shoulder_roll_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(shoulder_roll_names)):
+            self.shoulder_roll_indices[i] = self.gym.find_actor_rigid_body_handle(
+                self.envs[0], self.actor_handles[0], shoulder_roll_names[i]
+            )
+
+        shoulder_yaw_names = [s for s in body_names if self.cfg.asset.shoulder_yaw_name in s]
+        self.shoulder_yaw_indices = torch.zeros(len(shoulder_yaw_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(shoulder_yaw_names)):
+            self.shoulder_yaw_indices[i] = self.gym.find_actor_rigid_body_handle(
+                self.envs[0], self.actor_handles[0], shoulder_yaw_names[i]
+            )
+
+        elbow_names = [s for s in body_names if self.cfg.asset.elbow_name in s]
+        self.elbow_indices = torch.zeros(len(elbow_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(elbow_names)):
+            self.elbow_indices[i] = self.gym.find_actor_rigid_body_handle(
+                self.envs[0], self.actor_handles[0], elbow_names[i]
+            )
+
+        end_names = [s for s in body_names if self.cfg.asset.end_name in s]
+        self.end_indices = torch.zeros(len(end_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(end_names)):
+            self.end_indices[i] = self.gym.find_actor_rigid_body_handle(
+                self.envs[0], self.actor_handles[0], end_names[i]
+            )
+
+        # ---------- DOF / rigid body 标量索引 (动态查找, 不假设顺序) ----------
+        self.slider_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_root' in n)
+        self.arm_dof_indices = [i for i in range(self.num_dofs) if i != self.slider_dof_idx]
+        self.shoulder_pitch_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_pitch' in n)
+        self.elbow_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'elbow' in n)
+        self.end_effector_idx = self.end_indices[0].item()
+
     def _get_env_origins(self):
-        """以网格布局放置所有环境"""
+        # 为每个机器人实例分配一个不重叠的初始位置
+        self.custom_origins = False
+        # env_origins (num_envs, 3) 存储每个环境的原点位置
         self.env_origins = torch.zeros(self.num_envs, 3, device=self.device, requires_grad=False)
         num_cols = np.floor(np.sqrt(self.num_envs))
         num_rows = np.ceil(self.num_envs / num_cols)
@@ -198,56 +348,80 @@ class FallArm(BaseTask):
         spacing = self.cfg.env.env_spacing
         self.env_origins[:, 0] = spacing * xx.flatten()[:self.num_envs]
         self.env_origins[:, 1] = spacing * yy.flatten()[:self.num_envs]
-        self.env_origins[:, 2] = 0.
+        self.env_origins[:, 2] = 0.0
+
+    # =====================================================================
+    #                     配置解析
+    # =====================================================================
+
+    def _parse_cfg(self, cfg):
+        self.dt = self.cfg.control.decimation * self.sim_params.dt
+        self.obs_scales = self.cfg.normalization.obs_scales
+        self.reward_scales = class_to_dict(self.cfg.rewards.scales)
+        self.constraint_scales = class_to_dict(self.cfg.constraints.scales)
+        self.max_episode_length_s = self.cfg.env.episode_length_s
+        self.max_episode_length = np.ceil(self.max_episode_length_s / self.dt)
 
     # =====================================================================
     #                     资产属性回调 (创建环境时调用)
     # =====================================================================
 
     def _process_rigid_shape_props(self, props, env_id):
-        """可选: 摩擦力随机化"""
         if self.cfg.domain_rand.randomize_friction:
             if env_id == 0:
+                # prepare friction randomization
                 friction_range = self.cfg.domain_rand.friction_range
-                num_buckets = 64
-                bucket_ids = torch.randint(0, num_buckets, (self.num_envs, 1))
-                friction_buckets = torch_rand_float(
-                    friction_range[0], friction_range[1], (num_buckets, 1), device='cpu'
-                )
-                self.friction_coeffs = friction_buckets[bucket_ids]
+                self.friction_coeffs = torch_rand_float(friction_range[0], friction_range[1], (self.num_envs, 1), device=self.device)
             for s in range(len(props)):
                 props[s].friction = self.friction_coeffs[env_id]
+
+        if self.cfg.domain_rand.randomize_restitution:
+            if env_id == 0:
+                # prepare restitution randomization
+                restitution_range = self.cfg.domain_rand.restitution_range
+                self.restitution_coeffs = torch_rand_float(restitution_range[0], restitution_range[1], (self.num_envs, 1), device=self.device)
+            for s in range(len(props)):
+                props[s].restitution = self.restitution_coeffs[env_id]
+
         return props
 
     def _process_dof_props(self, props, env_id):
-        """读取 URDF 中定义的关节限位, 计算软限位"""
         if env_id == 0:
-            self.dof_pos_limits = torch.zeros(
-                self.num_dof, 2, dtype=torch.float, device=self.device, requires_grad=False
-            )
-            self.dof_vel_limits = torch.zeros(
-                self.num_dof, dtype=torch.float, device=self.device, requires_grad=False
-            )
-            self.torque_limits = torch.zeros(
-                self.num_dof, dtype=torch.float, device=self.device, requires_grad=False
-            )
+            # 位置限制: 所有 DOF
+            self.dof_pos_limits = torch.zeros(len(props), 2, dtype=torch.float, device=self.device, requires_grad=False)
             for i in range(len(props)):
-                self.dof_pos_limits[i, 0] = props["lower"][i].item()
-                self.dof_pos_limits[i, 1] = props["upper"][i].item()
-                self.dof_vel_limits[i] = props["velocity"][i].item()
-                self.torque_limits[i] = props["effort"][i].item()
-                # 软限位
-                m = (self.dof_pos_limits[i, 0] + self.dof_pos_limits[i, 1]) / 2
-                r = self.dof_pos_limits[i, 1] - self.dof_pos_limits[i, 0]
-                self.dof_pos_limits[i, 0] = m - 0.5 * r * self.cfg.rewards.soft_dof_pos_limit
-                self.dof_pos_limits[i, 1] = m + 0.5 * r * self.cfg.rewards.soft_dof_pos_limit
+                if i == self.slider_dof_idx:
+                    # slider: 硬限制 (不乘 soft 系数)
+                    self.dof_pos_limits[i, 0] = props['lower'][i].item()
+                    self.dof_pos_limits[i, 1] = props['upper'][i].item()
+                else:
+                    # 手臂关节: 软限制
+                    self.dof_pos_limits[i, 0] = props['lower'][i].item() * self.cfg.limitation.soft_dof_pos_limit
+                    self.dof_pos_limits[i, 1] = props['upper'][i].item() * self.cfg.limitation.soft_dof_pos_limit
+
+            # 速度 / 力矩限制: 仅手臂 DOF (slider 为被动自由度, 不需要)
+            self.dof_vel_limits = torch.zeros(len(self.arm_dof_indices), dtype=torch.float, device=self.device, requires_grad=False)
+            self.torque_limits = torch.zeros(len(self.arm_dof_indices), dtype=torch.float, device=self.device, requires_grad=False)
+            for j, i in enumerate(self.arm_dof_indices):
+                self.dof_vel_limits[j] = props['velocity'][i].item()
+                self.torque_limits[j] = props['effort'][i].item()
         return props
 
     def _process_rigid_body_props(self, props, env_id):
-        """可选: 基座质量随机化"""
-        if self.cfg.domain_rand.randomize_base_mass:
-            rng = self.cfg.domain_rand.added_mass_range
-            props[0].mass += np.random.uniform(rng[0], rng[1])
+        if self.cfg.domain_rand.randomize_payload_mass:
+            props[self.shoulder_root_index].mass = self.default_rigid_body_mass[self.shoulder_root_index] + self.payload[env_id, 0]
+
+        if self.cfg.domain_rand.randomize_com_displacement:
+            props[self.shoulder_root_index].com = self.default_com_shoulder_root + gymapi.Vec3(self.com_displacement[env_id, 0], self.com_displacement[env_id, 1], self.com_displacement[env_id, 2])
+
+        if self.cfg.domain_rand.randomize_link_mass:
+            rng = self.cfg.domain_rand.link_mass_range
+            for i in range(0, len(props)):
+                if i == self.shoulder_root_index:
+                    continue
+                scale = np.random.uniform(rng[0], rng[1])
+                props[i].mass = scale * self.default_rigid_body_mass[i]
+
         return props
 
     # =====================================================================
@@ -255,61 +429,48 @@ class FallArm(BaseTask):
     # =====================================================================
 
     def _init_buffers(self):
-        """获取 GPU 状态张量, 初始化所有运行时 buffer"""
         # ---------- GPU 状态张量 ----------
-        actor_root_state = self.gym.acquire_actor_root_state_tensor(self.sim)
-        dof_state_tensor = self.gym.acquire_dof_state_tensor(self.sim)
+        dof_state = self.gym.acquire_dof_state_tensor(self.sim)
         net_contact_forces = self.gym.acquire_net_contact_force_tensor(self.sim)
         rigid_body_state = self.gym.acquire_rigid_body_state_tensor(self.sim)
-
         self.gym.refresh_dof_state_tensor(self.sim)
-        self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_net_contact_force_tensor(self.sim)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
 
         # ---------- 包装为 PyTorch 张量 ----------
-        self.root_states = gymtorch.wrap_tensor(actor_root_state)
-        self.dof_state = gymtorch.wrap_tensor(dof_state_tensor)
-        self.dof_pos = self.dof_state.view(self.num_envs, self.num_dof, 2)[..., 0]
-        self.dof_vel = self.dof_state.view(self.num_envs, self.num_dof, 2)[..., 1]
-        self.base_quat = self.root_states[:, 3:7]
+        self.dof_state = gymtorch.wrap_tensor(dof_state)
+        self.dof_states = self.dof_state.view(self.num_envs, self.num_dofs, 2)
+        self.dof_pos = self.dof_states[..., 0]
+        self.dof_vel = self.dof_states[..., 1]
+        self.last_dof_vel = torch.zeros_like(self.dof_vel)
+
         self.contact_forces = gymtorch.wrap_tensor(net_contact_forces).view(self.num_envs, -1, 3)
         self.rigid_body_states = gymtorch.wrap_tensor(rigid_body_state).view(
             self.num_envs, self.num_bodies, 13
         )
 
-        # ---------- 末端执行器索引 ----------
-        self.end_effector_idx = self.gym.find_actor_rigid_body_handle(
-            self.envs[0], self.actor_handles[0], self.cfg.asset.foot_name
-        )
-
-        # ---------- DOF 索引快捷方式 ----------
-        self.slider_dof_idx = 0
-        self.arm_dof_indices = list(range(1, self.num_dof))
-        self.elbow_dof_idx = self.num_dof - 1
-
         # ---------- 坠落高度范围 ----------
         if hasattr(self.cfg.init_state, 'drop_height_range'):
             self.drop_height_min = self.cfg.init_state.drop_height_range[0]
             self.drop_height_max = self.cfg.init_state.drop_height_range[1]
-        else:
-            default_h = self.cfg.init_state.default_joint_angles.get('slider_joint', 1.5)
-            self.drop_height_min = default_h - 0.3
-            self.drop_height_max = default_h + 0.3
 
         # ---------- 通用 buffer ----------
+        # 仿真步数计数器
         self.common_step_counter = 0
+        # 额外信息
         self.extras = {}
+        # 噪声
         self.noise_scale_vec = self._get_noise_scale_vec(self.cfg)
-        self.gravity_vec = to_torch(
-            get_axis_params(-1., self.up_axis_idx), device=self.device
-        ).repeat((self.num_envs, 1))
-
+        # 各关节力矩 (num_dofs 维, 覆盖所有 DOF 包含 slider)
         self.torques = torch.zeros(
-            self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False
+            self.num_envs, self.num_dofs, dtype=torch.float, device=self.device, requires_grad=False
         )
+
+        # PD 增益 (num_actions 维)
         self.p_gains = torch.zeros(self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.d_gains = torch.zeros(self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+
+        # 动作 actions（当前、上一个、上上个）
         self.actions = torch.zeros(
             self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False
         )
@@ -319,248 +480,243 @@ class FallArm(BaseTask):
         self.last_last_actions = torch.zeros(
             self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False
         )
-        self.last_dof_vel = torch.zeros_like(self.dof_vel)
-        self.last_root_vel = torch.zeros_like(self.root_states[:, 7:13])
 
-        self.base_lin_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
-        self.base_ang_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
-        self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
-
-        # ---------- 末端执行器专用 buffer ----------
+        # ---------- 末端执行器 & 接触 buffer ----------
         self.end_effector_pos = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float)
-        self.end_effector_vel = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float)
-        self.end_effector_contact_force = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float)
         self.ee_in_contact = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
-        self.max_impact_force = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        self.max_slider_acc = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        self.step_max_slider_acc = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        self.max_shoulder_pitch_torque = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        self.max_elbow_torque = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        self.min_shoulder_root_height = torch.full(
+            (self.num_envs,), float('inf'), dtype=torch.float, device=self.device
+        )
+        self.shoulder_root_height = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+
+        # 动作缩放
+        self.action_rescale = self.cfg.control.action_scale * torch.ones(
+            self.num_envs, dtype=torch.float, device=self.device, requires_grad=False
+        ).unsqueeze(1)
+        # 模拟延迟
+        self.delay_buffer = torch.zeros(self.cfg.domain_rand.max_delay_timesteps, self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
 
         # ---------- 默认关节角 & PD 增益 ----------
         self.default_dof_pos = torch.zeros(
-            self.num_dof, dtype=torch.float, device=self.device, requires_grad=False
+            self.num_dofs, dtype=torch.float, device=self.device, requires_grad=False
         )
         for i in range(self.num_dofs):
             name = self.dof_names[i]
             angle = self.cfg.init_state.default_joint_angles[name]
             self.default_dof_pos[i] = angle
+
+        # PD 增益仅赋值给手臂关节 (num_actions 维)
+        for arm_j, dof_i in enumerate(self.arm_dof_indices):
+            name = self.dof_names[dof_i]
             found = False
             for dof_name in self.cfg.control.stiffness.keys():
                 if dof_name in name:
-                    self.p_gains[i] = self.cfg.control.stiffness[dof_name]
-                    self.d_gains[i] = self.cfg.control.damping[dof_name]
+                    self.p_gains[arm_j] = self.cfg.control.stiffness[dof_name]
+                    self.d_gains[arm_j] = self.cfg.control.damping[dof_name]
                     found = True
             if not found:
-                self.p_gains[i] = 0.
-                self.d_gains[i] = 0.
-                if self.cfg.control.control_type in ["P", "V"]:
-                    print(f"PD gain of joint {name} were not defined, setting them to zero")
+                self.p_gains[arm_j] = 0.0
+                self.d_gains[arm_j] = 0.0
+                if self.cfg.control.control_type in ['P', 'V']:
+                    print(f'PD gain of joint {name} were not defined, setting them to zero')
         self.default_dof_pos = self.default_dof_pos.unsqueeze(0)
 
-    # =====================================================================
-    #                     配置解析
-    # =====================================================================
+        # 随机化 kp、kd、actuation_offset、motor_strength
+        self.Kp_factors = torch.ones(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.Kd_factors = torch.ones(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.actuation_offset = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.motor_strength = torch.ones(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        if self.cfg.domain_rand.randomize_kp:
+            self.Kp_factors = torch_rand_float(self.cfg.domain_rand.kp_range[0], self.cfg.domain_rand.kp_range[1], (self.num_envs, self.num_actions), device=self.device)
+        if self.cfg.domain_rand.randomize_kd:
+            self.Kd_factors = torch_rand_float(self.cfg.domain_rand.kd_range[0], self.cfg.domain_rand.kd_range[1], (self.num_envs, self.num_actions), device=self.device)
+        if self.cfg.domain_rand.randomize_actuation_offset:
+            self.actuation_offset = torch_rand_float(self.cfg.domain_rand.actuation_offset_range[0], self.cfg.domain_rand.actuation_offset_range[1], (self.num_envs, self.num_actions), device=self.device) * self.torque_limits.unsqueeze(0)
+        if self.cfg.domain_rand.randomize_motor_strength:
+            self.motor_strength = torch_rand_float(self.cfg.domain_rand.motor_strength_range[0], self.cfg.domain_rand.motor_strength_range[1], (self.num_envs, self.num_actions), device=self.device)
+        if self.cfg.domain_rand.delay:
+            self.delay_idx = torch.randint(low=0, high=self.cfg.domain_rand.max_delay_timesteps, size=(self.num_envs,), device=self.device)
 
-    def _parse_cfg(self, cfg):
-        """从配置中提取常用量"""
-        self.dt = self.cfg.control.decimation * self.sim_params.dt
-        self.obs_scales = self.cfg.normalization.obs_scales
-        self.reward_scales = class_to_dict(self.cfg.rewards.scales)
-        self.max_episode_length_s = self.cfg.env.episode_length_s
-        self.max_episode_length = np.ceil(self.max_episode_length_s / self.dt)
+        # ---------- 课程学习 buffer ----------
+        if self.cfg.curriculum.use_curriculum:
+            self.force = self.cfg.curriculum.force_initial * torch.ones(
+                self.num_envs, 1, dtype=torch.float, device=self.device
+            )
+            self.curriculum_forces = torch.zeros(
+                self.num_envs, self.num_bodies, 3, dtype=torch.float, device=self.device
+            )
 
     # =====================================================================
     #                     奖励系统
     # =====================================================================
 
     def _prepare_reward_function(self):
-        """扫描所有非零奖励 scale, 建立奖励函数列表"""
         # 移除零 scale, 非零 scale 乘 dt
         for key in list(self.reward_scales.keys()):
             scale = self.reward_scales[key]
             if scale == 0:
                 self.reward_scales.pop(key)
             else:
-                self.reward_scales[key] *= self.dt
-        # 按名称查找 _reward_<name> 方法
+                self.reward_scales[key] *= 1
+
+        for key in list(self.constraint_scales.keys()):
+            scale = self.constraint_scales[key]
+            if scale == 0:
+                self.constraint_scales.pop(key)
+            else:
+                self.constraint_scales[key] *= self.dt  # constraints 权重乘以时间步长
+
+        # prepare list of functions
         self.reward_functions = []
         self.reward_names = []
         for name, scale in self.reward_scales.items():
-            if name == "termination":
+            if name == 'termination':
                 continue
             self.reward_names.append(name)
-            self.reward_functions.append(getattr(self, '_reward_' + name))
-        # 回合累计
-        self.episode_sums = {
-            name: torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
-            for name in self.reward_scales.keys()
-        }
+            name = '_reward_' + '_'.join(name.split('_')[1:])
+            self.reward_functions.append(getattr(self, name))
+        self.constraint_functions = []
+        self.constraint_names = []
+        for name, scale in self.constraint_scales.items():
+            self.constraint_names.append(name)
+            name = '_reward_' + '_'.join(name.split('_')[1:])
+            self.constraint_functions.append(getattr(self, name))
+
+        self.episode_sums = {}
+        for name in self.reward_scales.keys():
+            self.episode_sums[name] = torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
+        for name in self.constraint_scales.keys():
+            self.episode_sums[name] = torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
+        for rg in self.reward_groups:
+            self.episode_sums[rg] = torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
 
     def compute_reward(self):
-        """计算总奖励"""
-        self.rew_buf[:] = 0.
+        self.rew_buf[:, :] = 0
+        task_group_index = self.reward_groups.index('task')
+        self.rew_buf[:, task_group_index] = 1
+
         for i in range(len(self.reward_functions)):
             name = self.reward_names[i]
             rew = self.reward_functions[i]() * self.reward_scales[name]
-            self.rew_buf += rew
+            if len(rew.shape) == 2 and rew.shape[1] == 1:
+                rew = rew.squeeze(1)
+            self.rew_buf[:, task_group_index] *= rew
             self.episode_sums[name] += rew
-        if self.cfg.rewards.only_positive_rewards:
-            self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.)
-        # termination 奖励在 clip 之后加入
-        if "termination" in self.reward_scales:
-            rew = self._reward_termination() * self.reward_scales["termination"]
-            self.rew_buf += rew
-            self.episode_sums["termination"] += rew
+
+        # 异常终止 → task 组乘零归零 + 施加惩罚
+        abnormal_termination = self._reward_termination()  # 异常终止=1, 正常=0
+        survival_mask = 1.0 - abnormal_termination          # 异常终止=0, 正常=1
+        self.rew_buf[:, task_group_index] *= survival_mask
+        # termination scale 控制异常终止的惩罚力度 (负值 → 惩罚)
+        termination_rew = abnormal_termination * self.reward_scales['termination']
+        self.rew_buf[:, task_group_index] += termination_rew
+        self.episode_sums['termination'] += termination_rew
+
+        for i in range(len(self.constraint_functions)):
+            name = self.constraint_names[i]
+            reward_group_name = name.split('_')[0]  # 提取前缀: regu/style/target
+            rew = self.constraint_functions[i]() * self.constraint_scales[name]
+            group_index = self.reward_groups.index(reward_group_name)
+            self.rew_buf[:, group_index] += rew
+            self.episode_sums[name] += rew
+
+        # reward_groups = ['task', 'regu', 'style', 'target'] 四类汇总
+        for rg in self.reward_groups:
+            idx = self.reward_groups.index(rg)
+            self.episode_sums[rg] += self.rew_buf[:, idx]
 
     # =====================================================================
     #                     PD 控制器
     # =====================================================================
 
     def _compute_torques(self, actions):
-        """PD 控制器: 将动作 → 力矩"""
-        actions_scaled = actions * self.cfg.control.action_scale
-        control_type = self.cfg.control.control_type
-        if control_type == "P":
-            torques = (self.p_gains * (actions_scaled + self.default_dof_pos - self.dof_pos)
-                       - self.d_gains * self.dof_vel)
-        elif control_type == "V":
-            torques = (self.p_gains * (actions_scaled - self.dof_vel)
-                       - self.d_gains * (self.dof_vel - self.last_dof_vel) / self.sim_params.dt)
-        elif control_type == "T":
-            torques = actions_scaled
+        # PD 控制器: 在 4-dim 手臂空间完成全部计算, 最后组装 5-dim DOF 力矩
+        # actions: (num_envs, num_actions=4) 仅手臂关节
+
+        # ---- 1. 动作缩放与延迟 (4-dim 手臂空间) ----
+        actions_scaled = actions * self.action_rescale  # (num_envs, 4)
+
+        if self.cfg.domain_rand.delay:
+            self.delay_buffer = torch.concat((self.delay_buffer[1:], actions_scaled.unsqueeze(0)), dim=0)
+            delayed_actions = self.delay_buffer[self.delay_idx, torch.arange(len(self.delay_idx)), :]
         else:
-            raise NameError(f"Unknown controller type: {control_type}")
-        return torch.clip(torques, -self.torque_limits, self.torque_limits)
+            delayed_actions = actions_scaled
 
-    # =====================================================================
-    #                         核心仿真流程
-    # =====================================================================
+        # ---- 2. PD 计算 (4-dim 手臂空间) ----
+        arm_dof_pos = self.dof_pos[:, self.arm_dof_indices]
+        arm_dof_vel = self.dof_vel[:, self.arm_dof_indices]
 
-    def step(self, actions):
-        """执行一步: clip 动作 → slider 清零 → decimation 次物理仿真 → post_physics_step"""
-        clip_actions = self.cfg.normalization.clip_actions
-        self.actions = torch.clip(actions, -clip_actions, clip_actions).to(self.device)
-        # slider 维度强制清零 (PD增益也是0, 但保持动作张量维度一致)
-        self.actions[:, self.slider_dof_idx] = 0.
+        self.joint_pos_target = arm_dof_pos + delayed_actions
 
-        self.render()
-        for _ in range(self.cfg.control.decimation):
-            self.torques = self._compute_torques(self.actions).view(self.torques.shape)
-            self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
-            self.gym.simulate(self.sim)
-            if self.device == 'cpu':
-                self.gym.fetch_results(self.sim, True)
-            self.gym.refresh_dof_state_tensor(self.sim)
-        self.post_physics_step()
+        control_type = self.cfg.control.control_type
+        if control_type == 'P':
+            arm_torques = self.p_gains * self.Kp_factors * (self.joint_pos_target - arm_dof_pos) - self.d_gains * self.Kd_factors * arm_dof_vel
+        elif control_type == 'V':
+            arm_torques = self.p_gains * (delayed_actions - arm_dof_vel) - self.d_gains * (arm_dof_vel - self.last_dof_vel[:, self.arm_dof_indices]) / self.sim_params.dt
+        elif control_type == 'T':
+            arm_torques = delayed_actions
+        else:
+            raise NameError(f'Unknown controller type: {control_type}')
 
-        clip_obs = self.cfg.normalization.clip_observations
-        self.obs_buf = torch.clip(self.obs_buf, -clip_obs, clip_obs)
-        if self.privileged_obs_buf is not None:
-            self.privileged_obs_buf = torch.clip(self.privileged_obs_buf, -clip_obs, clip_obs)
-        return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
+        # ---- 3. 驱动随机化 (4-dim 手臂空间) ----
+        arm_torques = self.motor_strength * arm_torques + self.actuation_offset
 
-    def post_physics_step(self):
-        """刷新状态张量 → 计算末端状态 → 终止 → 奖励 → 重置 → 观测"""
-        self.gym.refresh_actor_root_state_tensor(self.sim)
-        self.gym.refresh_net_contact_force_tensor(self.sim)
-        self.gym.refresh_rigid_body_state_tensor(self.sim)
+        # ---- 4. 力矩限幅 (4-dim 手臂空间) ----
+        arm_torques = torch.clip(arm_torques, -self.torque_limits, self.torque_limits)
 
-        self.episode_length_buf += 1
-        self.common_step_counter += 1
+        # ---- 5. 组装 5-dim DOF 力矩 ----
+        torques = torch.zeros(self.num_envs, self.num_dofs, device=self.device)
+        torques[:, self.arm_dof_indices] = arm_torques
 
-        # 基座状态 (fixed base, 仍用于 projected_gravity)
-        self.base_quat[:] = self.root_states[:, 3:7]
-        self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
-        self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
-        self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
+        # 导轨滑块摩擦力: 粘性摩擦 + 库仑摩擦 (不受 motor_strength / clip 影响)
+        slider_vel = self.dof_vel[:, self.slider_dof_idx]
+        torques[:, self.slider_dof_idx] = -self.cfg.control.slider_viscous_friction * slider_vel - self.cfg.control.slider_coulomb_friction * torch.sign(slider_vel)
 
-        # 末端执行器状态
-        self.end_effector_pos[:] = self.rigid_body_states[:, self.end_effector_idx, :3]
-        self.end_effector_vel[:] = self.rigid_body_states[:, self.end_effector_idx, 7:10]
-        self.end_effector_contact_force[:] = self.contact_forces[:, self.end_effector_idx, :]
-
-        # 接触阶段
-        force_mag = torch.norm(self.end_effector_contact_force, dim=-1)
-        self.ee_in_contact = (force_mag > 0.1).float()
-        self.max_impact_force = torch.maximum(self.max_impact_force, force_mag)
-
-        # 终止 → 奖励 → 重置 → 观测
-        self.check_termination()
-        self.compute_reward()
-        env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
-        self.reset_idx(env_ids)
-        self.compute_observations()
-
-        # 记录历史 (last_last 在 last 之前更新)
-        self.last_last_actions[:] = self.last_actions[:]
-        self.last_actions[:] = self.actions[:]
-        self.last_dof_vel[:] = self.dof_vel[:]
-        self.last_root_vel[:] = self.root_states[:, 7:13]
-
-        if self.viewer and self.enable_viewer_sync and self.debug_viz:
-            self._draw_debug_vis()
+        return torques
 
     # =====================================================================
     #                           观测计算
     # =====================================================================
 
     def compute_observations(self):
-        """
-        构建 24 维观测向量:
-            [0:5]   关节位置偏差 (含滑块高度)
-            [5:10]  关节速度 (含滑块下落速度)
-            [10:15] 上一步动作
-            [15:18] 重力方向
-            [18:19] 末端执行器高度
-            [19:22] 末端执行器线速度
-            [22:23] 归一化回合时间
-            [23:24] 末端是否触地 (contact phase)
-        """
-        ee_height = self.end_effector_pos[:, 2:3]
-        time_ratio = (self.episode_length_buf.float() / self.max_episode_length).unsqueeze(1)
+        arm_dof_pos = (self.dof_pos[:, self.arm_dof_indices] - self.default_dof_pos[:, self.arm_dof_indices]) * self.obs_scales.dof_pos
+        arm_dof_vel = self.dof_vel[:, self.arm_dof_indices] * self.obs_scales.dof_vel
+        arm_actions = self.actions
 
-        self.obs_buf = torch.cat([
-            (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,    # (5)
-            self.dof_vel * self.obs_scales.dof_vel,                              # (5)
-            self.actions,                                                         # (5)
-            self.projected_gravity,                                               # (3)
-            ee_height * self.obs_scales.end_effector_height,                      # (1)
-            self.end_effector_vel * self.obs_scales.end_effector_vel,             # (3)
-            time_ratio,                                                           # (1)
-            self.ee_in_contact.unsqueeze(1),                                      # (1)
+        current_obs = torch.cat([
+            arm_dof_pos, arm_dof_vel, arm_actions,
+            self.action_rescale + (torch.rand_like(self.action_rescale) - 0.5) * 0.05,
         ], dim=-1)
 
         if self.add_noise:
-            self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
+            current_obs += (2 * torch.rand_like(current_obs) - 1) * self.noise_scale_vec
+
+        self.obs_buf = torch.cat((self.obs_buf[:, self.num_one_step_obs:self.actor_proprioceptive_obs_length], current_obs), dim=-1)
 
     def _get_noise_scale_vec(self, cfg):
-        """构建与观测维度一致的噪声缩放向量 (24维)"""
-        noise_vec = torch.zeros(self.num_obs, device=self.device)
+        # 构建与观测维度一致的噪声缩放向量 (13维)
+        noise_vec = torch.zeros(self.num_one_step_obs, device=self.device)
         self.add_noise = self.cfg.noise.add_noise
         noise_scales = self.cfg.noise.noise_scales
         noise_level = self.cfg.noise.noise_level
         idx = 0
 
-        # dof_pos (5)
-        noise_vec[idx:idx + self.num_dof] = noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
-        idx += self.num_dof
-        # dof_vel (5)
-        noise_vec[idx:idx + self.num_dof] = noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
-        idx += self.num_dof
-        # previous actions (5) — 无噪声
-        noise_vec[idx:idx + self.num_actions] = 0.
-        idx += self.num_actions
-        # projected gravity (3)
-        noise_vec[idx:idx + 3] = noise_scales.gravity * noise_level
-        idx += 3
-        # end_effector_height (1)
-        noise_vec[idx:idx + 1] = 0.02 * noise_level
+        # arm_dof_pos (4)
+        noise_vec[idx:idx + self.num_real_dofs] = noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
+        idx += self.num_real_dofs
+        # arm_dof_vel (4)
+        noise_vec[idx:idx + self.num_real_dofs] = noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
+        idx += self.num_real_dofs
+        # arm_actions (4) - 策略输出, 非传感器量测, 无噪声
+        noise_vec[idx:idx + self.num_real_dofs] = 0.0
+        idx += self.num_real_dofs
+        # action_rescale (1)
+        noise_vec[idx:idx + 1] = 0.0
         idx += 1
-        # end_effector_vel (3)
-        noise_vec[idx:idx + 3] = noise_scales.lin_vel * noise_level * self.obs_scales.end_effector_vel
-        idx += 3
-        # time_ratio (1) — 无噪声
-        noise_vec[idx:idx + 1] = 0.
-        idx += 1
-        # contact_phase (1) — 无噪声
-        noise_vec[idx:idx + 1] = 0.
         return noise_vec
 
     # =====================================================================
@@ -568,23 +724,19 @@ class FallArm(BaseTask):
     # =====================================================================
 
     def check_termination(self):
-        """
-        终止条件:
-            1. 非末端刚体接触地面 (如 slider_link 触地 → 失败)
-            2. 关节速度超过安全限制 (防止仿真爆炸)
-            3. 回合超时
-        """
-        # 条件1: 非法部位触地
+        # 非法部位触地
         self.reset_buf = torch.any(
             torch.norm(
                 self.contact_forces[:, self.termination_contact_indices, :], dim=-1
             ) > 1., dim=1,
         )
-
-        # 条件2: 安全限制
+        # 超时
+        self.time_out_buf = self.episode_length_buf > self.max_episode_length
+        self.reset_buf |= self.time_out_buf
+        # 超速
         if hasattr(self.cfg, 'limitation'):
             dof_vel_exceeded = torch.any(
-                torch.abs(self.dof_vel[:, 1:]) > self.cfg.limitation.dof_vel_limit, dim=1,
+                torch.abs(self.dof_vel[:, self.arm_dof_indices]) > self.cfg.limitation.dof_vel_limit, dim=1,
             )
             slider_vel_exceeded = (
                 torch.abs(self.dof_vel[:, self.slider_dof_idx]) > self.cfg.limitation.slider_vel_limit
@@ -592,64 +744,85 @@ class FallArm(BaseTask):
             self.reset_buf |= dof_vel_exceeded
             self.reset_buf |= slider_vel_exceeded
 
-        # 条件3: 超时
-        self.time_out_buf = self.episode_length_buf > self.max_episode_length
-        self.reset_buf |= self.time_out_buf
-
     # =====================================================================
     #                           环境重置
     # =====================================================================
 
     def reset_idx(self, env_ids):
-        """重置指定环境并记录回合统计"""
         if len(env_ids) == 0:
             return
-
+        self.extras['episode'] = {}
         self._reset_dofs(env_ids)
-        self._reset_root_states(env_ids)
+
+        # 难度增加
+        self._update_force_curriculum(env_ids)
 
         # 清零 buffer
+        self.actions[env_ids] = 0.
         self.last_actions[env_ids] = 0.
         self.last_last_actions[env_ids] = 0.
         self.last_dof_vel[env_ids] = 0.
+        self.obs_buf[env_ids] = 0.
         self.episode_length_buf[env_ids] = 0
+        self.real_episode_length_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1
 
         # 回合奖励统计
-        self.extras["episode"] = {}
         for key in self.episode_sums.keys():
-            self.extras["episode"]['rew_' + key] = (
+            self.extras['episode']['rew_' + key] = (
                 torch.mean(self.episode_sums[key][env_ids]) / self.max_episode_length_s
             )
             self.episode_sums[key][env_ids] = 0.
 
-        # 最大冲击力日志
-        if len(env_ids) > 0:
-            self.extras["episode"]["max_impact_force"] = torch.mean(self.max_impact_force[env_ids])
-        self.max_impact_force[env_ids] = 0.
-
         if self.cfg.env.send_timeouts:
-            self.extras["time_outs"] = self.time_out_buf
+            self.extras['time_outs'] = self.time_out_buf
+
+        # 回合级统计量日志
+        if len(env_ids) > 0:
+            self.extras['episode']['max_slider_acc'] = torch.mean(self.max_slider_acc[env_ids])
+            self.extras['episode']['max_shoulder_pitch_torque'] = torch.mean(self.max_shoulder_pitch_torque[env_ids])
+            self.extras['episode']['max_elbow_torque'] = torch.mean(self.max_elbow_torque[env_ids])
+            self.extras['episode']['min_shoulder_root_height'] = torch.mean(self.min_shoulder_root_height[env_ids])
+        self.max_slider_acc[env_ids] = 0.
+        self.max_shoulder_pitch_torque[env_ids] = 0.
+        self.max_elbow_torque[env_ids] = 0.
+        self.min_shoulder_root_height[env_ids] = float('inf')
+
+        self.extras['episode']['curriculum_force'] = torch.mean(self.force[env_ids])
+        self.extras['episode']['curriculum_action_rescale'] = torch.mean(self.action_rescale[env_ids])
 
     def _reset_dofs(self, env_ids):
-        """重置 DOF: 滑块高度随机, 手臂关节加小扰动, 速度清零"""
-        self.dof_pos[env_ids] = self.default_dof_pos.clone()
-
-        # 手臂关节加小扰动
-        arm_noise = torch_rand_float(
-            -0.1, 0.1, (len(env_ids), self.num_dof), device=self.device
-        )
-        self.dof_pos[env_ids] += arm_noise
-
-        # 滑块高度随机化
-        slider_height = torch_rand_float(
+        # ---- 滑块关节: 仅偏移, 从 drop_height_range 直接采样 (不乘缩放) ----
+        self.dof_pos[env_ids, self.slider_dof_idx] = torch_rand_float(
             self.drop_height_min, self.drop_height_max,
             (len(env_ids), 1), device=self.device
         ).squeeze(1)
-        self.dof_pos[env_ids, self.slider_dof_idx] = slider_height
+
+        # ---- 手臂关节: 缩放 × default + 偏移 ----
+        arm_default = self.default_dof_pos[:, self.arm_dof_indices]  # (1, num_real_dofs)
+        if self.cfg.domain_rand.randomize_initial_joint_pos:
+            init_arm_pos = arm_default * torch_rand_float(
+                self.cfg.domain_rand.initial_joint_pos_scale[0],
+                self.cfg.domain_rand.initial_joint_pos_scale[1],
+                (len(env_ids), self.num_real_dofs), device=self.device
+            )
+            init_arm_pos += torch_rand_float(
+                self.cfg.domain_rand.initial_joint_pos_offset[0],
+                self.cfg.domain_rand.initial_joint_pos_offset[1],
+                (len(env_ids), self.num_real_dofs), device=self.device
+            )
+            arm_lower = self.dof_pos_limits[self.arm_dof_indices, 0]
+            arm_upper = self.dof_pos_limits[self.arm_dof_indices, 1]
+            init_arm_pos = torch.clip(init_arm_pos, arm_lower, arm_upper)
+        else:
+            init_arm_pos = arm_default * torch_rand_float(
+                0.9, 1.1, (len(env_ids), self.num_real_dofs), device=self.device
+            )
+
+        self.dof_pos[env_ids.unsqueeze(1), self.arm_dof_indices] = init_arm_pos
 
         # 速度清零
-        self.dof_vel[env_ids] = 0.
+        self.dof_vel[env_ids] = 0.0
 
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         self.gym.set_dof_state_tensor_indexed(
@@ -659,19 +832,34 @@ class FallArm(BaseTask):
             len(env_ids_int32),
         )
 
-    def _reset_root_states(self, env_ids):
-        """基座 fix_base_link, root state 重置保持张量一致性"""
-        self.root_states[env_ids] = self.base_init_state
-        self.root_states[env_ids, :3] += self.env_origins[env_ids]
-        self.root_states[env_ids, 7:13] = 0.
+    def _update_force_curriculum(self, env_ids):
+        # 课程学习: 根据回合表现逐步降低辅助, 增加任务难度
+        # 整体思路:
+        #   训练初期给 shoulder_root 施加较大的向上辅助力 (接近抵消重力),
+        #   使策略先在"简单模式"下学会基本的手臂控制和着陆姿态;
+        #   当策略足够好 (回合内始终维持一定高度) 时, 逐步减小辅助力,
+        #   最终 force=0, 策略必须在完全自由落体下完成软着陆.
+        #   action_rescale 同步递减, 逐步收紧动作幅度, 要求更精细的控制.
 
-        env_ids_int32 = env_ids.to(dtype=torch.int32)
-        self.gym.set_actor_root_state_tensor_indexed(
-            self.sim,
-            gymtorch.unwrap_tensor(self.root_states),
-            gymtorch.unwrap_tensor(env_ids_int32),
-            len(env_ids_int32),
-        )
+        if not self.cfg.curriculum.use_curriculum:
+            return
+
+        # 判断哪些环境"通过"了本回合的考核:
+        #   min_shoulder_root_height[i] 记录了环境 i 整个回合中 shoulder_root 的最低高度
+        #   如果最低高度 > 阈值, 说明策略全程都维持住了, 算"通过"
+        passed = self.min_shoulder_root_height[env_ids] > self.cfg.curriculum.min_height_threshold
+        # 只对通过考核的环境增加难度 (未通过的保持当前难度继续练)
+        passed_ids = env_ids[passed]
+
+        if len(passed_ids) > 0:
+            # 减小辅助力, 但不低于 force_min (通常为 0)
+            self.force[passed_ids] = (
+                self.force[passed_ids] - self.cfg.curriculum.force_decrement
+            ).clamp(min=self.cfg.curriculum.force_min)
+            # 减小动作缩放, 但不低于 action_rescale_min
+            self.action_rescale[passed_ids] = (
+                self.action_rescale[passed_ids] - self.cfg.curriculum.action_rescale_decrement
+            ).clamp(min=self.cfg.curriculum.action_rescale_min)
 
     # =====================================================================
     #                         相机与可视化
@@ -700,81 +888,113 @@ class FallArm(BaseTask):
     # =====================================================================
     #                         奖励函数
     # =====================================================================
-    # 命名规则: _reward_<name> 对应 rewards.scales.<name>
 
-    def _reward_soft_landing(self):
-        """软着陆奖励: 接触力越小得分越高, 仅在触地时生效"""
-        force_mag = torch.norm(self.end_effector_contact_force, dim=-1)
-        reward = torch.exp(-force_mag / self.cfg.rewards.cushioning_sigma)
-        return reward * self.ee_in_contact
-
-    def _reward_end_effector_contact(self):
-        """末端触地奖励: 鼓励末端执行器接触地面"""
-        return self.ee_in_contact
-
-    def _reward_elbow_cushion(self):
-        """肘关节缓冲奖励 (触地时): 距机械限位越远 → 奖励越高"""
-        elbow_pos = self.dof_pos[:, self.elbow_dof_idx]
-        elbow_lower = self.dof_pos_limits[self.elbow_dof_idx, 0]
-        elbow_upper = self.dof_pos_limits[self.elbow_dof_idx, 1]
-        range_size = elbow_upper - elbow_lower + 1e-6
-        dist_from_lower = (elbow_pos - elbow_lower) / range_size
-        dist_from_upper = (elbow_upper - elbow_pos) / range_size
-        min_dist = torch.minimum(dist_from_lower, dist_from_upper)
-        return min_dist * self.ee_in_contact
-
-    def _reward_impact_deceleration(self):
-        """平缓减速奖励 (触地时): 滑块加速度越小 → 缓冲效果越好"""
-        slider_acc = torch.abs(
-            self.dof_vel[:, self.slider_dof_idx] - self.last_dof_vel[:, self.slider_dof_idx]
-        ) / self.dt
-        reward = torch.exp(-slider_acc / self.cfg.rewards.deceleration_sigma)
-        return reward * self.ee_in_contact
-
-    def _reward_smoothness(self):
-        """二阶动作平滑惩罚: penalize |a_t - 2*a_{t-1} + a_{t-2}|^2"""
-        diff2 = self.actions - 2 * self.last_actions + self.last_last_actions
-        return torch.sum(torch.square(diff2), dim=1)
-
-    def _reward_collision(self):
-        """惩罚非末端刚体的地面接触 (如大臂/小臂碰地)"""
-        return torch.sum(
-            1. * (torch.norm(
-                self.contact_forces[:, self.penalised_contact_indices, :], dim=-1
-            ) > 0.1), dim=1,
-        )
-
-    def _reward_arm_extension(self):
-        """空中阶段手臂前伸准备奖励: 末端执行器越靠近地面 → 奖励越高"""
-        ee_height = self.end_effector_pos[:, 2]
-        reward = torch.exp(-ee_height * 2.0)
-        in_air = (1.0 - self.ee_in_contact)
-        return reward * in_air
-
-    def _reward_torques(self):
-        """惩罚力矩 (跳过滑块DOF, 只计算手臂关节)"""
-        return torch.sum(torch.square(self.torques[:, 1:]), dim=1)
-
-    def _reward_dof_vel(self):
-        """惩罚关节速度过大"""
-        return torch.sum(torch.square(self.dof_vel), dim=1)
-
-    def _reward_dof_acc(self):
-        """惩罚关节加速度"""
-        return torch.sum(
-            torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=1
-        )
-
-    def _reward_action_rate(self):
-        """惩罚动作变化率"""
-        return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
-
-    def _reward_dof_pos_limits(self):
-        """惩罚关节位置超出软限位"""
-        out_of_limits = -(self.dof_pos - self.dof_pos_limits[:, 0]).clip(max=0.)
-        out_of_limits += (self.dof_pos - self.dof_pos_limits[:, 1]).clip(min=0.)
-        return torch.sum(out_of_limits, dim=1)
+    # 异常终止
 
     def _reward_termination(self):
-        """异常终止惩罚 (非超时终止)"""
         return self.reset_buf * ~self.time_out_buf
+
+    # task reward
+
+    def _reward_arm_pose_not_in_contact(self):
+        arm_pos = self.dof_pos[:, self.arm_dof_indices]
+        arm_default = self.default_dof_pos[:, self.arm_dof_indices]
+        deviation = torch.sum(torch.square(arm_pos - arm_default), dim=1)
+        pose_reward = torch.exp(-deviation / self.cfg.rewards.arm_pose_not_in_contact_sigma)
+        # 未接触时施加严格惩罚; 已接触时返回 1.0 (不影响 task 乘法组合)
+        not_in_contact = 1.0 - self.ee_in_contact
+        return not_in_contact * pose_reward + self.ee_in_contact
+
+    def _reward_low_slider_acc(self):
+        return tolerance(
+            self.max_slider_acc,
+            bounds=(0.0, self.cfg.rewards.low_slider_acc_threshold),
+            margin=self.cfg.rewards.low_slider_acc_margin,
+            value_at_margin=self.cfg.rewards.low_slider_acc_value_at_margin,
+        )
+
+    def _reward_high_min_shoulder_root_height(self):
+        return tolerance(
+            self.min_shoulder_root_height,
+            bounds=(self.cfg.rewards.high_min_shoulder_root_height_threshold, np.inf),
+            margin=self.cfg.rewards.high_min_shoulder_root_height_margin,
+            value_at_margin=self.cfg.rewards.high_min_shoulder_root_height_value_at_margin,
+        )
+
+    # regularization reward
+
+    def _reward_dof_acc(self):
+        arm_vel = self.dof_vel[:, self.arm_dof_indices]
+        arm_last_vel = self.last_dof_vel[:, self.arm_dof_indices]
+        return torch.sum(torch.square((arm_last_vel - arm_vel) / self.dt), dim=1)
+
+    def _reward_dof_vel(self):
+        return torch.sum(torch.square(self.dof_vel[:, self.arm_dof_indices]), dim=1)
+
+    def _reward_action_rate(self):
+        return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
+
+    def _reward_smoothness(self):
+        return torch.sum(torch.square(self.actions - self.last_actions - self.last_actions + self.last_last_actions), dim=1)
+
+    def _reward_torques(self):
+        return torch.sum(torch.square(self.torques[:, self.arm_dof_indices]), dim=1)
+
+    def _reward_joint_power(self):
+        arm_vel = self.dof_vel[:, self.arm_dof_indices]
+        arm_torques = self.torques[:, self.arm_dof_indices]
+        return torch.sum(torch.abs(arm_vel) * torch.abs(arm_torques), dim=1)
+
+    def _reward_dof_pos_limits(self):
+        arm_pos = self.dof_pos[:, self.arm_dof_indices]
+        arm_limits = self.dof_pos_limits[self.arm_dof_indices]
+        out_of_limits = -(arm_pos - arm_limits[:, 0]).clip(max=0.0)
+        out_of_limits += (arm_pos - arm_limits[:, 1]).clip(min=0.0)
+        return torch.sum(out_of_limits, dim=1)
+
+    def _reward_dof_vel_limits(self):
+        return torch.sum(
+            (torch.abs(self.dof_vel[:, self.arm_dof_indices]) - self.dof_vel_limits * self.cfg.limitation.soft_dof_vel_limit).clip(min=0.0, max=1.0),
+            dim=1,
+        )
+
+    # style reward
+
+    def _reward_low_shoulder_pitch_torque(self):
+        return torch.exp(-self.max_shoulder_pitch_torque / self.cfg.constraints.low_shoulder_pitch_torque_sigma)
+
+    def _reward_low_elbow_torque(self):
+        return torch.exp(-self.max_elbow_torque / self.cfg.constraints.low_elbow_torque_sigma)
+
+    def _reward_penalised_contact(self):
+        return torch.any(
+            torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1,
+            dim=1,
+        ).float()
+
+    # target reward
+
+    def _reward_arm_pose_at_contact(self):
+        arm_pos = self.dof_pos[:, self.arm_dof_indices]
+        arm_default = self.default_dof_pos[:, self.arm_dof_indices]
+        deviation = torch.sum(torch.square(arm_pos - arm_default), dim=1)
+        pose_reward = torch.exp(-deviation / self.cfg.constraints.arm_pose_at_contact_sigma)
+        return self.ee_in_contact * pose_reward
+
+    def _reward_low_slider_acc_at_contact(self):
+        acc_reward = tolerance(
+            self.step_max_slider_acc,
+            bounds=(0.0, self.cfg.constraints.low_slider_acc_at_contact_threshold),
+            margin=self.cfg.constraints.low_slider_acc_at_contact_margin,
+            value_at_margin=self.cfg.constraints.low_slider_acc_at_contact_value_at_margin,
+        )
+        return self.ee_in_contact * acc_reward
+
+    def _reward_high_shoulder_root_height_at_contact(self):
+        height_reward = tolerance(
+            self.shoulder_root_height,
+            bounds=(self.cfg.constraints.high_shoulder_root_height_at_contact_threshold, np.inf),
+            margin=self.cfg.constraints.high_shoulder_root_height_at_contact_margin,
+            value_at_margin=self.cfg.constraints.high_shoulder_root_height_at_contact_value_at_margin,
+        )
+        return self.ee_in_contact * height_reward

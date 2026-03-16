@@ -32,6 +32,7 @@ class BaseTask():
         self.num_obs = cfg.env.num_observations
         self.num_privileged_obs = cfg.env.num_privileged_obs
         self.num_actions = cfg.env.num_actions
+        self.reward_groups = self.cfg.rewards.reward_groups
 
         # optimization flags for pytorch JIT
         torch._C._jit_set_profiling_mode(False)
@@ -39,9 +40,12 @@ class BaseTask():
 
         # allocate buffers
         self.obs_buf = torch.zeros(self.num_envs, self.num_obs, device=self.device, dtype=torch.float)
-        self.rew_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        self.rew_buf = torch.zeros(self.num_envs, self.cfg.rewards.num_reward_groups, device=self.device, dtype=torch.float)
+        self.new_rew_buf = torch.zeros(self.num_envs, self.cfg.rewards.num_reward_groups, device=self.device, dtype=torch.float)
+        self.last_rew_buf = torch.zeros(self.num_envs, self.cfg.rewards.num_reward_groups, device=self.device, dtype=torch.float)
         self.reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+        self.real_episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
         self.time_out_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
         if self.num_privileged_obs is not None:
             self.privileged_obs_buf = torch.zeros(self.num_envs, self.num_privileged_obs, device=self.device, dtype=torch.float)
@@ -70,13 +74,6 @@ class BaseTask():
                 self.viewer, gymapi.KEY_SPACE, 'pause')
             self.gym.subscribe_viewer_keyboard_event(
                 self.viewer, gymapi.KEY_V, 'toggle_viewer_sync')
-            self.gym.subscribe_viewer_keyboard_event(
-                self.viewer, gymapi.KEY_LEFT, 'prev_id')
-            self.gym.subscribe_viewer_keyboard_event(
-                self.viewer, gymapi.KEY_RIGHT, 'next_id')
-            self.gym.subscribe_viewer_keyboard_event(
-                self.viewer, gymapi.KEY_F, 'free_cam')
-        # Camera follow state
         self.free_cam = False
         self.lookat_id = 0
         self.lookat_vec = torch.tensor([2, -2, 1], requires_grad=False, device=self.device)
@@ -100,13 +97,11 @@ class BaseTask():
         raise NotImplementedError
 
     def set_camera(self, position, lookat):
-        """Set camera position and direction"""
         cam_pos = gymapi.Vec3(position[0], position[1], position[2])
         cam_target = gymapi.Vec3(lookat[0], lookat[1], lookat[2])
         self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
 
     def lookat(self, i):
-        """Camera follows robot i. Override in subclass for custom tracking."""
         if hasattr(self, 'root_states') and self.root_states is not None:
             look_at_pos = self.root_states[i, :3].clone()
             cam_pos = look_at_pos + self.lookat_vec
@@ -117,11 +112,8 @@ class BaseTask():
             # check for window closed
             if self.gym.query_viewer_has_closed(self.viewer):
                 sys.exit()
-
-            # follow camera
             if not self.free_cam:
                 self.lookat(self.lookat_id)
-
             # check for keyboard events
             for evt in self.gym.query_viewer_action_events(self.viewer):
                 if evt.action == 'QUIT' and evt.value > 0:
@@ -131,12 +123,24 @@ class BaseTask():
 
                 # env switching (follow mode)
                 if not self.free_cam:
+                    for i in range(9):
+                        if evt.action == 'lookat' + str(i) and evt.value > 0:
+                            self.lookat(i)
+                            self.lookat_id = i
                     if evt.action == 'prev_id' and evt.value > 0:
                         self.lookat_id = (self.lookat_id - 1) % self.num_envs
                         self.lookat(self.lookat_id)
                     if evt.action == 'next_id' and evt.value > 0:
                         self.lookat_id = (self.lookat_id + 1) % self.num_envs
                         self.lookat(self.lookat_id)
+                    if evt.action == 'vx_plus' and evt.value > 0:
+                        self.commands[self.lookat_id, 0] += 0.2
+                    if evt.action == 'vx_minus' and evt.value > 0:
+                        self.commands[self.lookat_id, 0] -= 0.2
+                    if evt.action == 'left_turn' and evt.value > 0:
+                        self.commands[self.lookat_id, 3] += 0.5
+                    if evt.action == 'right_turn' and evt.value > 0:
+                        self.commands[self.lookat_id, 3] -= 0.5
 
                 # free camera toggle
                 if evt.action == 'free_cam' and evt.value > 0:
@@ -160,6 +164,7 @@ class BaseTask():
             if self.device != 'cpu':
                 self.gym.fetch_results(self.sim, True)
 
+            self.gym.poll_viewer_events(self.viewer)
             # step graphics
             if self.enable_viewer_sync:
                 self.gym.step_graphics(self.sim)

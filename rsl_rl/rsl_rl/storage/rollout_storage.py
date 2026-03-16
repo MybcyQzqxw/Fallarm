@@ -50,7 +50,7 @@ class RolloutStorage:
         def clear(self):
             self.__init__()
 
-    def __init__(self, num_envs, num_transitions_per_env, obs_shape, privileged_obs_shape, actions_shape, device='cpu'):
+    def __init__(self, num_envs, num_transitions_per_env, obs_shape, privileged_obs_shape, actions_shape, num_critics, reward_group_weights, device='cpu'):
 
         self.device = device
 
@@ -58,21 +58,24 @@ class RolloutStorage:
         self.privileged_obs_shape = privileged_obs_shape
         self.actions_shape = actions_shape
 
+        self.num_critics = num_critics
+        self.reward_group_weights = torch.tensor(reward_group_weights, device=self.device).view(1, 1, -1)
+
         # Core
         self.observations = torch.zeros(num_transitions_per_env, num_envs, *obs_shape, device=self.device)
         if privileged_obs_shape[0] is not None:
             self.privileged_observations = torch.zeros(num_transitions_per_env, num_envs, *privileged_obs_shape, device=self.device)
         else:
             self.privileged_observations = None
-        self.rewards = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
+        self.rewards = torch.zeros(num_transitions_per_env, num_envs, num_critics, device=self.device)
         self.actions = torch.zeros(num_transitions_per_env, num_envs, *actions_shape, device=self.device)
         self.dones = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device).byte()
 
         # For PPO
         self.actions_log_prob = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
-        self.values = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
-        self.returns = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
-        self.advantages = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
+        self.values = torch.zeros(num_transitions_per_env, num_envs, num_critics, device=self.device)
+        self.returns = torch.zeros(num_transitions_per_env, num_envs, num_critics, device=self.device)
+        self.advantages = torch.zeros(num_transitions_per_env, num_envs, num_critics, device=self.device)
         self.mu = torch.zeros(num_transitions_per_env, num_envs, *actions_shape, device=self.device)
         self.sigma = torch.zeros(num_transitions_per_env, num_envs, *actions_shape, device=self.device)
 
@@ -91,7 +94,7 @@ class RolloutStorage:
         self.observations[self.step].copy_(transition.observations)
         if self.privileged_observations is not None: self.privileged_observations[self.step].copy_(transition.critic_observations)
         self.actions[self.step].copy_(transition.actions)
-        self.rewards[self.step].copy_(transition.rewards.view(-1, 1))
+        self.rewards[self.step].copy_(transition.rewards.view(-1, self.num_critics))
         self.dones[self.step].copy_(transition.dones.view(-1, 1))
         self.values[self.step].copy_(transition.values)
         self.actions_log_prob[self.step].copy_(transition.actions_log_prob.view(-1, 1))
@@ -132,9 +135,12 @@ class RolloutStorage:
             advantage = delta + next_is_not_terminal * gamma * lam * advantage
             self.returns[step] = advantage + self.values[step]
 
-        # Compute and normalize the advantages
-        self.advantages = self.returns - self.values
-        self.advantages = (self.advantages - self.advantages.mean()) / (self.advantages.std() + 1e-8)
+        # Compute and normalize the advantages for each critic
+        for critic_idx in range(self.num_critics):
+            self.advantages[:, :, critic_idx] = self.returns[:, :, critic_idx] - self.values[:, :, critic_idx]
+            self.advantages[:, :, critic_idx] = (self.advantages[:, :, critic_idx] - self.advantages[:, :, critic_idx].mean()) / (self.advantages[:, :, critic_idx].std() + 1e-8)
+
+        self.multi_critic_advantages = torch.sum(self.advantages * self.reward_group_weights, dim=-1)
 
     def get_statistics(self):
         done = self.dones
@@ -145,23 +151,26 @@ class RolloutStorage:
         return trajectory_lengths.float().mean(), self.rewards.mean()
 
     def mini_batch_generator(self, num_mini_batches, num_epochs=8):
-        batch_size = self.num_envs * self.num_transitions_per_env
+        batch_size = self.num_envs * (self.num_transitions_per_env - 1)
         mini_batch_size = batch_size // num_mini_batches
         indices = torch.randperm(num_mini_batches*mini_batch_size, requires_grad=False, device=self.device)
 
-        observations = self.observations.flatten(0, 1)
+        observations = self.observations[:-1].flatten(0, 1)
         if self.privileged_observations is not None:
-            critic_observations = self.privileged_observations.flatten(0, 1)
+            critic_observations = self.privileged_observations[:-1].flatten(0, 1)
         else:
             critic_observations = observations
 
-        actions = self.actions.flatten(0, 1)
-        values = self.values.flatten(0, 1)
-        returns = self.returns.flatten(0, 1)
-        old_actions_log_prob = self.actions_log_prob.flatten(0, 1)
-        advantages = self.advantages.flatten(0, 1)
-        old_mu = self.mu.flatten(0, 1)
-        old_sigma = self.sigma.flatten(0, 1)
+        next_observations = self.observations[1:].flatten(0, 1)
+
+        actions = self.actions[:-1].flatten(0, 1)
+        values = self.values[:-1].flatten(0, 1)
+        returns = self.returns[:-1].flatten(0, 1)
+        old_actions_log_prob = self.actions_log_prob[:-1].flatten(0, 1)
+        advantages = self.multi_critic_advantages[:-1].flatten(0, 1)
+        old_mu = self.mu[:-1].flatten(0, 1)
+        old_sigma = self.sigma[:-1].flatten(0, 1)
+        not_dones = 1 - self.dones[:-1].float().flatten(0, 1)
 
         for epoch in range(num_epochs):
             for i in range(num_mini_batches):
@@ -169,8 +178,9 @@ class RolloutStorage:
                 start = i*mini_batch_size
                 end = (i+1)*mini_batch_size
                 batch_idx = indices[start:end]
-
+                cont_batch = not_dones[batch_idx]
                 obs_batch = observations[batch_idx]
+                next_obs_batch = next_observations[batch_idx]
                 critic_observations_batch = critic_observations[batch_idx]
                 actions_batch = actions[batch_idx]
                 target_values_batch = values[batch_idx]
@@ -179,7 +189,7 @@ class RolloutStorage:
                 advantages_batch = advantages[batch_idx]
                 old_mu_batch = old_mu[batch_idx]
                 old_sigma_batch = old_sigma[batch_idx]
-                yield obs_batch, critic_observations_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, \
+                yield obs_batch, critic_observations_batch, next_obs_batch, cont_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, \
                        old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (None, None), None
 
     # for RNNs only

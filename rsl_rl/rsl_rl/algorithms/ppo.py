@@ -39,6 +39,7 @@ class PPO:
     actor_critic: ActorCritic
     def __init__(self,
                  actor_critic,
+                 reward_group_weights,
                  num_learning_epochs=1,
                  num_mini_batches=1,
                  clip_param=0.2,
@@ -52,6 +53,9 @@ class PPO:
                  schedule="fixed",
                  desired_kl=0.01,
                  device='cpu',
+                 value_smoothness_coef=0.1,
+                 smoothness_upper_bound=1.0,
+                 smoothness_lower_bound=0.0,
                  ):
 
         self.device = device
@@ -66,6 +70,7 @@ class PPO:
         self.storage = None # initialized later
         self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=learning_rate)
         self.transition = RolloutStorage.Transition()
+        self.reward_group_weights = reward_group_weights
 
         # PPO parameters
         self.clip_param = clip_param
@@ -78,8 +83,12 @@ class PPO:
         self.max_grad_norm = max_grad_norm
         self.use_clipped_value_loss = use_clipped_value_loss
 
-    def init_storage(self, num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape):
-        self.storage = RolloutStorage(num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape, self.device)
+        self.value_smoothness_coef = value_smoothness_coef
+        self.smoothness_upper_bound = smoothness_upper_bound
+        self.smoothness_lower_bound = smoothness_lower_bound
+
+    def init_storage(self, num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape, num_critics):
+        self.storage = RolloutStorage(num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape, num_critics, self.reward_group_weights, self.device)
 
     def test_mode(self):
         self.actor_critic.test()
@@ -124,7 +133,7 @@ class PPO:
             generator = self.storage.reccurent_mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
         else:
             generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
-        for obs_batch, critic_obs_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, \
+        for obs_batch, critic_obs_batch, next_obs_batch, cont_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, \
             old_mu_batch, old_sigma_batch, hid_states_batch, masks_batch in generator:
 
 
@@ -169,6 +178,19 @@ class PPO:
                     value_loss = (returns_batch - value_batch).pow(2).mean()
 
                 loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
+
+                # Smooth loss
+                epsilon = self.smoothness_lower_bound / (self.smoothness_upper_bound - self.smoothness_lower_bound + 1e-8)
+                policy_smooth_coef = self.smoothness_upper_bound * epsilon; value_smooth_coef = self.value_smoothness_coef * policy_smooth_coef
+
+                mix_weights = cont_batch * (torch.rand_like(cont_batch) - 0.5) * 2.0
+                mix_obs_batch = obs_batch + mix_weights * (next_obs_batch - obs_batch)
+
+                policy_smooth_loss = torch.square(torch.norm(mu_batch - self.actor_critic.act_inference(mix_obs_batch), dim=-1)).mean()
+                value_smooth_loss = torch.square(torch.norm(value_batch - self.actor_critic.evaluate(mix_obs_batch), dim=-1)).mean()
+                smooth_loss = policy_smooth_coef * policy_smooth_loss + value_smooth_coef * value_smooth_loss
+
+                loss += smooth_loss
 
                 # Gradient step
                 self.optimizer.zero_grad()

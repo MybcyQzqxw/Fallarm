@@ -366,6 +366,8 @@ class FallArm(BaseTask):
         self.slider_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_root' in n)
         self.arm_dof_indices = [i for i in range(self.num_dofs) if i != self.slider_dof_idx]
         self.shoulder_pitch_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_pitch' in n)
+        self.shoulder_roll_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_roll' in n)
+        self.shoulder_yaw_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_yaw' in n)
         self.elbow_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'elbow' in n)
         self.end_effector_idx = self.end_indices[0].item()
 
@@ -1040,6 +1042,13 @@ class FallArm(BaseTask):
             torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1,
             dim=1,
         ).float()
+
+    def _reward_arm_roll_yaw_deviation(self):
+        roll_yaw_pos = self.dof_pos[:, [self.shoulder_roll_idx, self.shoulder_yaw_idx]]
+        roll_yaw_default = self.default_dof_pos[:, [self.shoulder_roll_idx, self.shoulder_yaw_idx]]
+        deviation = torch.sum(torch.square(roll_yaw_pos - roll_yaw_default), dim=1)
+        reward = torch.exp(-deviation / self.cfg.constraints.arm_roll_yaw_deviation_sigma)
+        return reward
 
     # target reward
 

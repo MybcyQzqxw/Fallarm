@@ -160,7 +160,7 @@ class FallArmCfg(BaseConfig):
     class rewards:
         reward_groups = ['task', 'regu', 'style', 'target']
         num_reward_groups = len(reward_groups)
-        reward_group_weights = [1, 0.1, 1, 1]
+        reward_group_weights = [1, 0.2, 1, 1]
 
         arm_pose_not_in_contact_sigma = 0.5
         low_max_slider_acc_threshold = 40
@@ -173,13 +173,14 @@ class FallArmCfg(BaseConfig):
         class scales:
             termination = -1
             task_arm_pose_not_in_contact = 1
-            task_low_max_slider_acc = 2
+            task_low_max_slider_acc = 10
             task_high_min_shoulder_root_height = 1
 
     class constraints:
         # style reward
         low_max_shoulder_pitch_torque_sigma = 150.0
         low_max_elbow_torque_sigma = 150.0
+        arm_roll_yaw_deviation_sigma = 0.2
 
         # target reward
         arm_pose_at_contact_sigma = 2.0
@@ -195,16 +196,17 @@ class FallArmCfg(BaseConfig):
             regu_dof_acc = -2.5e-7
             regu_dof_vel = -1e-3
             regu_action_rate = -5e-2
-            regu_smoothness = -1e-2
+            regu_smoothness = -1e-1
             regu_torques = -1e-5
-            regu_joint_power = -1e-4
+            regu_joint_power = -1e-3
             regu_dof_pos_limits = -1
             regu_dof_vel_limits = -5
 
             # style reward
             style_low_max_shoulder_pitch_torque = 10
             style_low_max_elbow_torque = 10
-            style_penalised_contact = -10
+            style_penalised_contact = -20
+            style_arm_roll_yaw_deviation = 10
 
             # target reward
             target_arm_pose_at_contact = 5

@@ -13,11 +13,11 @@ class FallArmCfg(BaseConfig):
             'left_shoulder_pitch_joint': 0.0,
             'left_shoulder_roll_joint': 0.0,
             'left_shoulder_yaw_joint': 0.0,
-            'left_elbow_joint': 0.7,
+            'left_elbow_joint': 0.78,
         }
 
         # 坠落高度随机范围 [min, max] (m), 用于 reset 时随机化 slider_joint 位置
-        drop_height_range = [0.8, 0.9]
+        drop_height_range = [0.8, 1.0]
 
     class env:
         num_envs = 1024
@@ -160,14 +160,14 @@ class FallArmCfg(BaseConfig):
     class rewards:
         reward_groups = ['task', 'regu', 'style', 'target']
         num_reward_groups = len(reward_groups)
-        reward_group_weights = [2, 0.001, 1, 2]
+        reward_group_weights = [2, 0.01, 1, 2]
 
         arm_pose_not_in_contact_sigma = 0.5
-        low_slider_acc_threshold = 40
-        low_slider_acc_margin = 20
-        low_slider_acc_value_at_margin = 0.01
-        high_min_shoulder_root_height_threshold = 0.55
-        high_min_shoulder_root_height_margin = 0.15
+        low_max_slider_acc_threshold = 40
+        low_max_slider_acc_margin = 20
+        low_max_slider_acc_value_at_margin = 0.01
+        high_min_shoulder_root_height_threshold = 0.45
+        high_min_shoulder_root_height_margin = 0.05
         high_min_shoulder_root_height_value_at_margin = 0.01
 
         class scales:
@@ -178,8 +178,8 @@ class FallArmCfg(BaseConfig):
 
     class constraints:
         # style reward
-        low_shoulder_pitch_torque_sigma = 150.0
-        low_elbow_torque_sigma = 150.0
+        low_max_shoulder_pitch_torque_sigma = 150.0
+        low_max_elbow_torque_sigma = 150.0
 
         # target reward
         arm_pose_at_contact_sigma = 2.0
@@ -195,16 +195,16 @@ class FallArmCfg(BaseConfig):
             regu_dof_acc = -2.5e-7
             regu_dof_vel = -1e-3
             regu_action_rate = -5e-3
-            regu_smoothness = -1e-3
+            regu_smoothness = -1e-2
             regu_torques = -1e-5
             regu_joint_power = -1e-4
-            regu_dof_pos_limits = -2.5
+            regu_dof_pos_limits = -1
             regu_dof_vel_limits = -1
 
             # style reward
-            style_low_shoulder_pitch_torque = 3.0
-            style_low_elbow_torque = 3.0
-            style_penalised_contact = -100
+            style_low_shoulder_pitch_torque = 5
+            style_low_elbow_torque = 5
+            style_penalised_contact = -10
 
             # target reward
             target_arm_pose_at_contact = 5

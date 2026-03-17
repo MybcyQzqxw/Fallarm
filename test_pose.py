@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'legged_gym'))
 from isaacgym import gymapi, gymutil, gymtorch
 import numpy as np
 import torch
+import time
 
 
 class FallArmPoseViewer:
@@ -31,12 +32,12 @@ class FallArmPoseViewer:
             'left_shoulder_pitch_joint': 0,    # 肩部俯仰 [deg]
             'left_shoulder_roll_joint': 0,     # 肩部横滚 [deg]
             'left_shoulder_yaw_joint': 0,      # 肩部偏航 [deg]
-            'left_elbow_joint': 45,            # 肘关节 [deg] (0.5 rad ≈ 28.6°)
+            'left_elbow_joint': 70,            # 肘关节 [deg] (0.5 rad ≈ 28.6°)
         }
 
         # 滑块关节单独配置 (单位: 米, 控制初始坠落高度)
         self.slider_joint_pos = {
-            'left_shoulder_root_joint': 1,     # 初始高度 [m]
+            'left_shoulder_root_joint': 0.45,     # 初始高度 [m]
         }
 
         # 基座姿态配置 (fall_arm 基座固定在原点)
@@ -67,6 +68,8 @@ class FallArmPoseViewer:
         
         # 设置关节角度
         self._set_joint_angles()
+        # 初始化上次打印时间，用于每秒一次的终端输出
+        self._last_print_time = time.time()
         
     def _create_sim(self):
         """创建仿真环境"""
@@ -138,6 +141,11 @@ class FallArmPoseViewer:
             self.dof_names.append(name)
             
         print(f"Robot DOFs ({self.num_dof}): {self.dof_names}")
+        # 记录导轨（滑块）关节索引，便于运行时读取位置
+        try:
+            self.left_shoulder_root_idx = self.dof_names.index('left_shoulder_root_joint')
+        except ValueError:
+            self.left_shoulder_root_idx = None
         
     def _create_env(self):
         """创建环境"""
@@ -248,6 +256,14 @@ class FallArmPoseViewer:
             
             # 同步
             self.gym.sync_frame_time(self.sim)
+            # 每隔 1 秒在终端输出 left_shoulder_root_joint 的位置
+            if getattr(self, 'left_shoulder_root_idx', None) is not None:
+                now = time.time()
+                if now - self._last_print_time >= 1.0:
+                    dof_state = self.gym.get_actor_dof_states(self.env, self.robot_handle, gymapi.STATE_ALL)
+                    pos = float(dof_state['pos'][self.left_shoulder_root_idx])
+                    print(f"left_shoulder_root_joint position: {pos:.4f} m")
+                    self._last_print_time = now
             
         # 清理
         self.gym.destroy_viewer(self.viewer)

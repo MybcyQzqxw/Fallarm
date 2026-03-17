@@ -73,7 +73,7 @@ class FallArm(BaseTask):
 
         # 每步开始前清零子步累积量
         self.ee_in_contact[:] = 0.
-        self.step_max_slider_acc[:] = 0.
+        self.max_slider_acc_in_one_step[:] = 0.
         prev_slider_vel = self.dof_vel[:, self.slider_dof_idx].clone()
 
         for _ in range(self.cfg.control.decimation):
@@ -99,7 +99,7 @@ class FallArm(BaseTask):
             current_slider_vel = self.dof_vel[:, self.slider_dof_idx]
             substep_slider_acc = torch.abs(current_slider_vel - prev_slider_vel) / self.sim_params.dt
             self.max_slider_acc = torch.maximum(self.max_slider_acc, substep_slider_acc)
-            self.step_max_slider_acc = torch.maximum(self.step_max_slider_acc, substep_slider_acc)
+            self.max_slider_acc_in_one_step = torch.maximum(self.max_slider_acc_in_one_step, substep_slider_acc)
             prev_slider_vel = current_slider_vel.clone()
             self.max_shoulder_pitch_torque = torch.maximum(self.max_shoulder_pitch_torque, torch.abs(self.torques[:, self.shoulder_pitch_idx]))
             # use DOF-index for accessing torques (self.torques is DOF-indexed)
@@ -532,7 +532,7 @@ class FallArm(BaseTask):
         self.end_effector_pos = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float)
         self.ee_in_contact = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.max_slider_acc = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
-        self.step_max_slider_acc = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        self.max_slider_acc_in_one_step = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.max_shoulder_pitch_torque = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.max_elbow_torque = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.min_shoulder_root_height = torch.full(
@@ -971,16 +971,15 @@ class FallArm(BaseTask):
         arm_default = self.default_dof_pos[:, self.arm_dof_indices]
         deviation = torch.sum(torch.square(arm_pos - arm_default), dim=1)
         pose_reward = torch.exp(-deviation / self.cfg.rewards.arm_pose_not_in_contact_sigma)
-        # 未接触时施加严格惩罚; 已接触时返回 1.0 (不影响 task 乘法组合)
         not_in_contact = 1.0 - self.ee_in_contact
         return not_in_contact * pose_reward + self.ee_in_contact
 
-    def _reward_low_slider_acc(self):
+    def _reward_low_max_slider_acc(self):
         return tolerance(
             self.max_slider_acc,
-            bounds=(0.0, self.cfg.rewards.low_slider_acc_threshold),
-            margin=self.cfg.rewards.low_slider_acc_margin,
-            value_at_margin=self.cfg.rewards.low_slider_acc_value_at_margin,
+            bounds=(0.0, self.cfg.rewards.low_max_slider_acc_threshold),
+            margin=self.cfg.rewards.low_max_slider_acc_margin,
+            value_at_margin=self.cfg.rewards.low_max_slider_acc_value_at_margin,
         )
 
     def _reward_high_min_shoulder_root_height(self):
@@ -1030,11 +1029,11 @@ class FallArm(BaseTask):
 
     # style reward
 
-    def _reward_low_shoulder_pitch_torque(self):
-        return torch.exp(-self.max_shoulder_pitch_torque / self.cfg.constraints.low_shoulder_pitch_torque_sigma)
+    def _reward_low_max_shoulder_pitch_torque(self):
+        return torch.exp(-self.max_shoulder_pitch_torque / self.cfg.constraints.low_max_shoulder_pitch_torque_sigma)
 
-    def _reward_low_elbow_torque(self):
-        return torch.exp(-self.max_elbow_torque / self.cfg.constraints.low_elbow_torque_sigma)
+    def _reward_low_max_elbow_torque(self):
+        return torch.exp(-self.max_elbow_torque / self.cfg.constraints.low_max_elbow_torque_sigma)
 
     def _reward_penalised_contact(self):
         return torch.any(
@@ -1053,7 +1052,7 @@ class FallArm(BaseTask):
 
     def _reward_low_slider_acc_at_contact(self):
         acc_reward = tolerance(
-            self.step_max_slider_acc,
+            self.max_slider_acc_in_one_step,
             bounds=(0.0, self.cfg.constraints.low_slider_acc_at_contact_threshold),
             margin=self.cfg.constraints.low_slider_acc_at_contact_margin,
             value_at_margin=self.cfg.constraints.low_slider_acc_at_contact_value_at_margin,

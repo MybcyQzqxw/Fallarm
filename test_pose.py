@@ -50,27 +50,21 @@ class FallArmPoseViewer:
         }
         # 合并滑块关节 (已经是米, 无需转换)
         self.target_joint_angles.update(self.slider_joint_pos)
-        
         # 初始化 gym
         self.gym = gymapi.acquire_gym()
-        
         # 创建仿真
         self._create_sim()
-        
         # 加载机器人
         self._load_robot()
-        
         # 创建环境
         self._create_env()
-        
         # 创建viewer
         self._create_viewer()
-        
         # 设置关节角度
         self._set_joint_angles()
         # 初始化上次打印时间，用于每秒一次的终端输出
         self._last_print_time = time.time()
-        
+
     def _create_sim(self):
         """创建仿真环境"""
         # 仿真参数
@@ -79,7 +73,6 @@ class FallArmPoseViewer:
         sim_params.substeps = 2
         sim_params.up_axis = gymapi.UP_AXIS_Z
         sim_params.gravity = gymapi.Vec3(0.0, 0.0, -9.81)
-        
         # PhysX 参数
         sim_params.physx.solver_type = 1
         sim_params.physx.num_position_iterations = 6
@@ -89,13 +82,11 @@ class FallArmPoseViewer:
         sim_params.physx.bounce_threshold_velocity = 0.5
         sim_params.physx.max_depenetration_velocity = 1.0
         sim_params.physx.use_gpu = True
-        
         # 创建sim
         self.sim = self.gym.create_sim(0, 0, gymapi.SIM_PHYSX, sim_params)
         if self.sim is None:
             print("Failed to create sim")
             sys.exit(1)
-            
         # 创建地面
         plane_params = gymapi.PlaneParams()
         plane_params.normal = gymapi.Vec3(0.0, 0.0, 1.0)
@@ -103,13 +94,11 @@ class FallArmPoseViewer:
         plane_params.dynamic_friction = 1.0
         plane_params.restitution = 0.0
         self.gym.add_ground(self.sim, plane_params)
-        
+
     def _load_robot(self):
         """加载机器人URDF"""
-        asset_root = os.path.join(os.path.dirname(__file__), 
-                                   "legged_gym/resources/robots/fall_arm")
+        asset_root = os.path.join(os.path.dirname(__file__), 'legged_gym/resources/robots/fall_arm')
         asset_file = "fall_arm.urdf"
-        
         asset_options = gymapi.AssetOptions()
         asset_options.fix_base_link = True  # 固定基座，保持机器人绝对静止
         asset_options.default_dof_drive_mode = gymapi.DOF_MODE_POS
@@ -124,48 +113,40 @@ class FallArmPoseViewer:
         asset_options.armature = 0.01
         asset_options.thickness = 0.01
         asset_options.disable_gravity = False
-        
         self.robot_asset = self.gym.load_asset(self.sim, asset_root, asset_file, asset_options)
         if self.robot_asset is None:
             print(f"Failed to load asset from {os.path.join(asset_root, asset_file)}")
             sys.exit(1)
-            
         # 获取关节数量和名称
         self.num_dof = self.gym.get_asset_dof_count(self.robot_asset)
         self.num_bodies = self.gym.get_asset_rigid_body_count(self.robot_asset)
-        
         # 获取关节名称
         self.dof_names = []
         for i in range(self.num_dof):
             name = self.gym.get_asset_dof_name(self.robot_asset, i)
             self.dof_names.append(name)
-            
         print(f"Robot DOFs ({self.num_dof}): {self.dof_names}")
         # 记录导轨（滑块）关节索引，便于运行时读取位置
         try:
             self.left_shoulder_root_idx = self.dof_names.index('left_shoulder_root_joint')
         except ValueError:
             self.left_shoulder_root_idx = None
-        
+
     def _create_env(self):
         """创建环境"""
         # 环境参数
         env_lower = gymapi.Vec3(-1.0, -1.0, 0.0)
         env_upper = gymapi.Vec3(1.0, 1.0, 2.0)
-        
         # 创建环境
         self.env = self.gym.create_env(self.sim, env_lower, env_upper, 1)
-        
         # 设置初始位姿（使用前部配置）
         start_pose = gymapi.Transform()
         start_pose.p = gymapi.Vec3(*self.base_position)
         start_pose.r = gymapi.Quat(*self.base_orientation)
-        
         # 创建actor
         self.robot_handle = self.gym.create_actor(
             self.env, self.robot_asset, start_pose, "fall_arm", 0, 0
         )
-        
         # 设置关节驱动属性 (高刚度PD控制保持姿态)
         dof_props = self.gym.get_actor_dof_properties(self.env, self.robot_handle)
         for i in range(self.num_dof):
@@ -182,29 +163,26 @@ class FallArmPoseViewer:
                 dof_props['stiffness'][i] = 500.0  # 高刚度
                 dof_props['damping'][i] = 50.0     # 适当阻尼
         self.gym.set_actor_dof_properties(self.env, self.robot_handle, dof_props)
-        
+
     def _create_viewer(self):
         """创建可视化窗口"""
         viewer_props = gymapi.CameraProperties()
         viewer_props.width = 1280
         viewer_props.height = 720
         viewer_props.horizontal_fov = 75.0
-        
         self.viewer = self.gym.create_viewer(self.sim, viewer_props)
         if self.viewer is None:
             print("Failed to create viewer")
             sys.exit(1)
-            
         # 设置相机位置
         cam_pos = gymapi.Vec3(1.0, 3.0, 2.0)
         cam_target = gymapi.Vec3(0.0, 0.0, 1.0)
         self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
-        
+
     def _set_joint_angles(self):
         """设置目标关节角度"""
         # 准备目标位置数组
         dof_targets = np.zeros(self.num_dof, dtype=np.float32)
-        
         print("\n设置关节角度:")
         # 根据关节名称设置目标角度
         for i, name in enumerate(self.dof_names):
@@ -219,41 +197,35 @@ class FallArmPoseViewer:
             else:
                 dof_targets[i] = 0.0
                 print(f"  [{i}] {name}: 0.0 (未在配置中找到，使用默认值)")
-                
         # 设置目标位置
         self.gym.set_actor_dof_position_targets(self.env, self.robot_handle, dof_targets)
-        
         # 强制设置所有关节的当前状态
         dof_state = self.gym.get_actor_dof_states(self.env, self.robot_handle, gymapi.STATE_ALL)
         for i in range(self.num_dof):
             dof_state['pos'][i] = dof_targets[i]
             dof_state['vel'][i] = 0.0
         self.gym.set_actor_dof_states(self.env, self.robot_handle, dof_state, gymapi.STATE_ALL)
-        
+
     def run(self):
         """运行仿真循环"""
-        print("\n" + "="*50)
+        print("\n" + "=" * 50)
         print("Fall Arm 姿态测试")
-        print("="*50)
+        print("=" * 50)
         print("按 ESC 退出")
         print("按 V 切换相机视角")
         print("按 R 重置机器人姿态")
-        print("="*50 + "\n")
-        
+        print("=" * 50 + "\n")
         while not self.gym.query_viewer_has_closed(self.viewer):
             # 处理键盘事件
             for evt in self.gym.query_viewer_action_events(self.viewer):
                 if evt.action == "reset" and evt.value > 0:
                     self._reset_robot()
-                    
             # 步进仿真
             self.gym.simulate(self.sim)
             self.gym.fetch_results(self.sim, True)
-            
             # 更新viewer
             self.gym.step_graphics(self.sim)
             self.gym.draw_viewer(self.viewer, self.sim, True)
-            
             # 同步
             self.gym.sync_frame_time(self.sim)
             # 每隔 1 秒在终端输出 left_shoulder_root_joint 的位置
@@ -264,15 +236,13 @@ class FallArmPoseViewer:
                     pos = float(dof_state['pos'][self.left_shoulder_root_idx])
                     print(f"left_shoulder_root_joint position: {pos:.4f} m")
                     self._last_print_time = now
-            
         # 清理
         self.gym.destroy_viewer(self.viewer)
         self.gym.destroy_sim(self.sim)
-        
+
     def _reset_robot(self):
         """重置机器人状态"""
         print("重置机器人姿态...")
-        
         # 重置关节角度
         self._set_joint_angles()
 

@@ -180,7 +180,7 @@ class FallArmCfg(BaseConfig):
         # style reward
         low_max_shoulder_pitch_torque_sigma = 150.0
         low_max_elbow_torque_sigma = 150.0
-        arm_roll_yaw_deviation_sigma = 0.2
+        arm_roll_yaw_deviation_sigma = 0.1
 
         # target reward
         arm_pose_at_contact_sigma = 2.0

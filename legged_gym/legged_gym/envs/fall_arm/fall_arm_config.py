@@ -194,7 +194,7 @@ class FallArmCfg(BaseConfig):
             # regularization reward
             regu_dof_acc = -2.5e-7
             regu_dof_vel = -1e-3
-            regu_action_rate = -5e-3
+            regu_action_rate = -5e-2
             regu_smoothness = -1e-2
             regu_torques = -1e-5
             regu_joint_power = -1e-4

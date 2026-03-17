@@ -173,7 +173,7 @@ class FallArmCfg(BaseConfig):
         class scales:
             termination = -1
             task_arm_pose_not_in_contact = 1
-            task_low_slider_acc = 1
+            task_low_max_slider_acc = 1
             task_high_min_shoulder_root_height = 1
 
     class constraints:
@@ -202,8 +202,8 @@ class FallArmCfg(BaseConfig):
             regu_dof_vel_limits = -1
 
             # style reward
-            style_low_shoulder_pitch_torque = 5
-            style_low_elbow_torque = 5
+            style_low_max_shoulder_pitch_torque = 5
+            style_low_max_elbow_torque = 5
             style_penalised_contact = -10
 
             # target reward

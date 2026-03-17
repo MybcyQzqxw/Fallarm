@@ -210,8 +210,8 @@ class FallArmCfg(BaseConfig):
 
             # target reward
             target_arm_pose_at_contact = 0
-            target_low_slider_acc_at_contact = 5
-            target_high_shoulder_root_height_at_contact = 5
+            target_low_slider_acc_at_contact = 10
+            target_high_shoulder_root_height_at_contact = 10
 
     class normalization:
         clip_observations = 100.0

@@ -10,10 +10,10 @@ class FallArmCfg(BaseConfig):
 
         default_joint_angles = {
             'left_shoulder_root_joint': 0.8,
-            'left_shoulder_pitch_joint': 0.39,
+            'left_shoulder_pitch_joint': 0.52,
             'left_shoulder_roll_joint': 0.0,
             'left_shoulder_yaw_joint': 0.0,
-            'left_elbow_joint': 0.78,
+            'left_elbow_joint': 1.3,
         }
 
         # 坠落高度随机范围 [min, max] (m), 用于 reset 时随机化 slider_joint 位置
@@ -163,17 +163,17 @@ class FallArmCfg(BaseConfig):
         reward_group_weights = [1, 0.5, 1, 1]
 
         arm_pose_not_in_contact_sigma = 0.5
-        low_max_slider_acc_threshold = 40
-        low_max_slider_acc_margin = 20
+        low_max_slider_acc_threshold = 60
+        low_max_slider_acc_margin = 40
         low_max_slider_acc_value_at_margin = 0.01
-        high_min_shoulder_root_height_threshold = 0.50
+        high_min_shoulder_root_height_threshold = 0.42
         high_min_shoulder_root_height_margin = 0.05
         high_min_shoulder_root_height_value_at_margin = 0.01
 
         class scales:
             termination = -1
             task_arm_pose_not_in_contact = 1
-            task_low_max_slider_acc = 15
+            task_low_max_slider_acc = 5
             task_high_min_shoulder_root_height = 1
 
     class constraints:
@@ -184,10 +184,10 @@ class FallArmCfg(BaseConfig):
 
         # target reward
         arm_pose_at_contact_sigma = 2.0
-        low_slider_acc_at_contact_threshold = 40
-        low_slider_acc_at_contact_margin = 20
+        low_slider_acc_at_contact_threshold = 60
+        low_slider_acc_at_contact_margin = 40
         low_slider_acc_at_contact_value_at_margin = 0.01
-        high_shoulder_root_height_at_contact_threshold = 0.60
+        high_shoulder_root_height_at_contact_threshold = 0.52
         high_shoulder_root_height_at_contact_margin = 0.15
         high_shoulder_root_height_at_contact_value_at_margin = 0.01
 
@@ -205,11 +205,11 @@ class FallArmCfg(BaseConfig):
             # style reward
             style_low_max_shoulder_pitch_torque = 10
             style_low_max_elbow_torque = 10
-            style_penalised_contact = -20
-            style_arm_roll_yaw_deviation = 20
+            style_penalised_contact = -10
+            style_arm_roll_yaw_deviation = 10
 
             # target reward
-            target_arm_pose_at_contact = 0
+            target_arm_pose_at_contact = 10
             target_low_slider_acc_at_contact = 10
             target_high_shoulder_root_height_at_contact = 10
 

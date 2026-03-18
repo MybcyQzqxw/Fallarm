@@ -9,11 +9,11 @@ class FallArmCfg(BaseConfig):
         ang_vel = [0.0, 0.0, 0.0]
 
         default_joint_angles = {
-            'left_shoulder_root_joint': 0.8,
-            'left_shoulder_pitch_joint': 0.52,
+            'left_shoulder_root_joint': 0.95,
+            'left_shoulder_pitch_joint': 0.0,
             'left_shoulder_roll_joint': 0.0,
             'left_shoulder_yaw_joint': 0.0,
-            'left_elbow_joint': 1.3,
+            'left_elbow_joint': 0.78,
         }
 
         # 坠落高度随机范围 [min, max] (m), 用于 reset 时随机化 slider_joint 位置
@@ -105,13 +105,13 @@ class FallArmCfg(BaseConfig):
         # _create_envs 中初始化下面 5 个
         # 负载质量
         randomize_payload_mass = use_random
-        payload_mass_range = [-2, 2]
+        payload_mass_range = [-1, 5]
         # 质心偏移
         randomize_com_displacement = use_random
-        com_displacement_range = [-0.03, 0.03]
+        com_displacement_range = [-0.05, 0.05]
         # 摩擦系数
         randomize_friction = use_random
-        friction_range = [0.1, 1]
+        friction_range = [0.1, 0.9]
         # 恢复系数
         randomize_restitution = use_random
         restitution_range = [0.0, 1.0]
@@ -151,29 +151,29 @@ class FallArmCfg(BaseConfig):
     class curriculum:
         use_curriculum = True
         force_initial = 100.0               # [N] 初始辅助上升力 (接近完全抵消重力)
-        force_decrement = 2.0              # [N] 通过课程后每次减小的力
+        force_decrement = 1.0              # [N] 通过课程后每次减小的力
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
-        action_rescale_decrement = 0.01     # 通过课程后每次减小的动作缩放
+        action_rescale_decrement = 0.005     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.25           # 最小动作缩放
         min_height_threshold = 0.5         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
 
     class rewards:
         reward_groups = ['task', 'regu', 'style', 'target']
         num_reward_groups = len(reward_groups)
-        reward_group_weights = [1, 0.5, 1, 1]
+        reward_group_weights = [1, 0.1, 1, 1]
 
         arm_pose_not_in_contact_sigma = 0.5
         low_max_slider_acc_threshold = 60
-        low_max_slider_acc_margin = 40
+        low_max_slider_acc_margin = 100
         low_max_slider_acc_value_at_margin = 0.01
-        high_min_shoulder_root_height_threshold = 0.42
+        high_min_shoulder_root_height_threshold = 0.48
         high_min_shoulder_root_height_margin = 0.05
         high_min_shoulder_root_height_value_at_margin = 0.01
 
         class scales:
             termination = -1
             task_arm_pose_not_in_contact = 1
-            task_low_max_slider_acc = 5
+            task_low_max_slider_acc = 20
             task_high_min_shoulder_root_height = 1
 
     class constraints:
@@ -185,9 +185,9 @@ class FallArmCfg(BaseConfig):
         # target reward
         arm_pose_at_contact_sigma = 2.0
         low_slider_acc_at_contact_threshold = 60
-        low_slider_acc_at_contact_margin = 40
+        low_slider_acc_at_contact_margin = 100
         low_slider_acc_at_contact_value_at_margin = 0.01
-        high_shoulder_root_height_at_contact_threshold = 0.52
+        high_shoulder_root_height_at_contact_threshold = 0.58
         high_shoulder_root_height_at_contact_margin = 0.15
         high_shoulder_root_height_at_contact_value_at_margin = 0.01
 

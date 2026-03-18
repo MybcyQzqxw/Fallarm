@@ -144,7 +144,7 @@ class FallArmCfg(BaseConfig):
     class limitation:
         dof_vel_limit = 300.0           # [rad/s] 关节角速度上限
         slider_vel_limit = 20.0         # [m/s] 导轨速度上限
-        slider_pos_min = 0.2           # [m] 导轨位置下限
+        slider_pos_min = 0.25           # [m] 导轨位置下限
         soft_dof_pos_limit = 0.9  # 软关节位置限制（安全范围比例）
         soft_dof_vel_limit = 0.9  # 软关节速度限制（安全范围比例）
 
@@ -155,7 +155,7 @@ class FallArmCfg(BaseConfig):
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
         action_rescale_decrement = 0.005     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.25           # 最小动作缩放
-        min_height_threshold = 0.5         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
+        min_height_threshold = 0.48         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
 
     class rewards:
         reward_groups = ['task', 'regu', 'style', 'target']

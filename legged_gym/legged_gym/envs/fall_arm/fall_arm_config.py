@@ -164,7 +164,7 @@ class FallArmCfg(BaseConfig):
 
         arm_pose_not_in_contact_sigma = 0.5
         low_max_slider_acc_threshold = 60
-        low_max_slider_acc_margin = 100
+        low_max_slider_acc_margin = 120
         low_max_slider_acc_value_at_margin = 0.01
         high_min_shoulder_root_height_threshold = 0.48
         high_min_shoulder_root_height_margin = 0.05
@@ -185,7 +185,7 @@ class FallArmCfg(BaseConfig):
         # target reward
         arm_pose_at_contact_sigma = 2.0
         low_slider_acc_at_contact_threshold = 60
-        low_slider_acc_at_contact_margin = 100
+        low_slider_acc_at_contact_margin = 120
         low_slider_acc_at_contact_value_at_margin = 0.01
         high_shoulder_root_height_at_contact_threshold = 0.58
         high_shoulder_root_height_at_contact_margin = 0.15
@@ -296,4 +296,4 @@ class FallArmCfgPPO(BaseConfig):
         load_run = -1  # -1 = last run
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
-        max_iterations = 12000  # number of policy updates
+        max_iterations = 50000  # number of policy updates

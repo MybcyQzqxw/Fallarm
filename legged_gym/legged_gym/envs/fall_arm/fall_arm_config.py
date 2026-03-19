@@ -105,13 +105,13 @@ class FallArmCfg(BaseConfig):
         # _create_envs 中初始化下面 5 个
         # 负载质量
         randomize_payload_mass = use_random
-        payload_mass_range = [-1, 5]
+        payload_mass_range = [-2, 5]
         # 质心偏移
         randomize_com_displacement = use_random
         com_displacement_range = [-0.05, 0.05]
         # 摩擦系数
         randomize_friction = use_random
-        friction_range = [0.1, 0.9]
+        friction_range = [0.1, 1.0]
         # 恢复系数
         randomize_restitution = use_random
         restitution_range = [0.0, 1.0]
@@ -155,18 +155,20 @@ class FallArmCfg(BaseConfig):
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
         action_rescale_decrement = 0.005     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.25           # 最小动作缩放
-        min_height_threshold = 0.48         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
+        min_shoulder_root_height_lower_threshold = 0.45         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
+        min_shoulder_root_height_upper_threshold = 0.50         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
 
     class rewards:
         reward_groups = ['task', 'regu', 'style', 'target']
         num_reward_groups = len(reward_groups)
-        reward_group_weights = [1, 0.1, 1, 1]
+        reward_group_weights = [1, 0.5, 1, 1]
 
         arm_pose_not_in_contact_sigma = 0.5
-        low_max_slider_acc_threshold = 100
-        low_max_slider_acc_margin = 60
+        low_max_slider_acc_threshold = 140
+        low_max_slider_acc_margin = 40
         low_max_slider_acc_value_at_margin = 0.01
-        high_min_shoulder_root_height_threshold = 0.48
+        high_min_shoulder_root_height_lower_threshold = 0.45
+        high_min_shoulder_root_height_upper_threshold = 0.50
         high_min_shoulder_root_height_margin = 0.05
         high_min_shoulder_root_height_value_at_margin = 0.01
 
@@ -180,14 +182,14 @@ class FallArmCfg(BaseConfig):
         # style reward
         low_max_shoulder_pitch_torque_sigma = 150.0
         low_max_elbow_torque_sigma = 150.0
-        arm_roll_yaw_deviation_sigma = 0.1
+        arm_roll_yaw_deviation_sigma = 0.5
 
         # target reward
-        arm_pose_at_contact_sigma = 2.0
-        low_slider_acc_at_contact_threshold = 100
-        low_slider_acc_at_contact_margin = 60
+        arm_pose_at_contact_sigma = 2.5
+        low_slider_acc_at_contact_threshold = 140
+        low_slider_acc_at_contact_margin = 40
         low_slider_acc_at_contact_value_at_margin = 0.01
-        high_shoulder_root_height_at_contact_threshold = 0.58
+        high_shoulder_root_height_at_contact_threshold = 0.55
         high_shoulder_root_height_at_contact_margin = 0.15
         high_shoulder_root_height_at_contact_value_at_margin = 0.01
 

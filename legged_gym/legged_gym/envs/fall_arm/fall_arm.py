@@ -936,7 +936,8 @@ class FallArm(BaseTask):
         # 判断哪些环境"通过"了本回合的考核:
         #   min_shoulder_root_height[i] 记录了环境 i 整个回合中 shoulder_root 的最低高度
         #   如果最低高度 > 阈值, 说明策略全程都维持住了, 算"通过"
-        passed = self.min_shoulder_root_height[env_ids] > self.cfg.curriculum.min_height_threshold
+        passed = (self.min_shoulder_root_height[env_ids] > self.cfg.curriculum.min_shoulder_root_height_lower_threshold) & (self.min_shoulder_root_height[env_ids] < self.cfg.curriculum.min_shoulder_root_height_upper_threshold)
+
         # 只对通过考核的环境增加难度 (未通过的保持当前难度继续练)
         passed_ids = env_ids[passed]
 
@@ -987,7 +988,8 @@ class FallArm(BaseTask):
     def _reward_high_min_shoulder_root_height(self):
         return tolerance(
             self.min_shoulder_root_height,
-            bounds=(self.cfg.rewards.high_min_shoulder_root_height_threshold, np.inf),
+            bounds=(self.cfg.rewards.high_min_shoulder_root_height_lower_threshold,
+                    self.cfg.rewards.high_min_shoulder_root_height_upper_threshold),
             margin=self.cfg.rewards.high_min_shoulder_root_height_margin,
             value_at_margin=self.cfg.rewards.high_min_shoulder_root_height_value_at_margin,
         )

@@ -105,7 +105,7 @@ class FallArmCfg(BaseConfig):
         # _create_envs 中初始化下面 5 个
         # 负载质量
         randomize_payload_mass = use_random
-        payload_mass_range = [-2, 5]
+        payload_mass_range = [-2, 2]
         # 质心偏移
         randomize_com_displacement = use_random
         com_displacement_range = [-0.05, 0.05]
@@ -161,15 +161,15 @@ class FallArmCfg(BaseConfig):
     class rewards:
         reward_groups = ['task', 'regu', 'style', 'target']
         num_reward_groups = len(reward_groups)
-        reward_group_weights = [1, 0.5, 1, 1]
+        reward_group_weights = [1, 0.1, 1, 1]
 
         arm_pose_not_in_contact_sigma = 0.5
-        low_max_slider_acc_threshold = 140
-        low_max_slider_acc_margin = 40
+        low_max_slider_acc_threshold = 100
+        low_max_slider_acc_margin = 200
         low_max_slider_acc_value_at_margin = 0.01
         high_min_shoulder_root_height_lower_threshold = 0.45
         high_min_shoulder_root_height_upper_threshold = 0.50
-        high_min_shoulder_root_height_margin = 0.05
+        high_min_shoulder_root_height_margin = 0.15
         high_min_shoulder_root_height_value_at_margin = 0.01
 
         class scales:
@@ -182,15 +182,20 @@ class FallArmCfg(BaseConfig):
         # style reward
         low_max_shoulder_pitch_torque_sigma = 150.0
         low_max_elbow_torque_sigma = 150.0
-        arm_roll_yaw_deviation_sigma = 0.5
+        arm_roll_yaw_deviation_sigma = 0.2
+        elbow_pos_lower_threshold = 0.7
+        elbow_pos_upper_threshold = 1.1
+        elbow_pos_margin = 0.4
+        elbow_pos_value_at_margin = 0.01
 
         # target reward
-        arm_pose_at_contact_sigma = 2.5
-        low_slider_acc_at_contact_threshold = 140
-        low_slider_acc_at_contact_margin = 40
+        arm_pose_at_contact_sigma = 2.0
+        low_slider_acc_at_contact_threshold = 100
+        low_slider_acc_at_contact_margin = 200
         low_slider_acc_at_contact_value_at_margin = 0.01
-        high_shoulder_root_height_at_contact_threshold = 0.55
-        high_shoulder_root_height_at_contact_margin = 0.15
+        high_shoulder_root_height_at_contact_lower_threshold = 0.50
+        high_shoulder_root_height_at_contact_upper_threshold = 0.70
+        high_shoulder_root_height_at_contact_margin = 0.20
         high_shoulder_root_height_at_contact_value_at_margin = 0.01
 
         class scales:
@@ -209,6 +214,7 @@ class FallArmCfg(BaseConfig):
             style_low_max_elbow_torque = 10
             style_penalised_contact = -10
             style_arm_roll_yaw_deviation = 10
+            style_elbow_pos = 10
 
             # target reward
             target_arm_pose_at_contact = 10

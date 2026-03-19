@@ -1052,6 +1052,17 @@ class FallArm(BaseTask):
         reward = torch.exp(-deviation / self.cfg.constraints.arm_roll_yaw_deviation_sigma)
         return reward
 
+    def _reward_elbow_pos(self):
+        elbow_pos = self.dof_pos[:, self.elbow_dof_idx]
+        elbow_pos_reward = tolerance(
+            elbow_pos,
+            bounds=(self.cfg.constraints.elbow_pos_lower_threshold,
+                    self.cfg.constraints.elbow_pos_upper_threshold),
+            margin=self.cfg.constraints.elbow_pos_margin,
+            value_at_margin=self.cfg.constraints.elbow_pos_value_at_margin,
+        )
+        return elbow_pos_reward
+
     # target reward
 
     def _reward_arm_pose_at_contact(self):
@@ -1073,7 +1084,8 @@ class FallArm(BaseTask):
     def _reward_high_shoulder_root_height_at_contact(self):
         height_reward = tolerance(
             self.shoulder_root_height,
-            bounds=(self.cfg.constraints.high_shoulder_root_height_at_contact_threshold, np.inf),
+            bounds=(self.cfg.constraints.high_shoulder_root_height_at_contact_lower_threshold,
+                    self.cfg.constraints.high_shoulder_root_height_at_contact_upper_threshold),
             margin=self.cfg.constraints.high_shoulder_root_height_at_contact_margin,
             value_at_margin=self.cfg.constraints.high_shoulder_root_height_at_contact_value_at_margin,
         )

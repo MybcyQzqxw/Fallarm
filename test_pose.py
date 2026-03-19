@@ -32,7 +32,7 @@ class FallArmPoseViewer:
             'left_shoulder_pitch_joint': 0,    # 肩部俯仰 [deg]
             'left_shoulder_roll_joint': 0,     # 肩部横滚 [deg]
             'left_shoulder_yaw_joint': 0,      # 肩部偏航 [deg]
-            'left_elbow_joint': 45,            # 肘关节 [deg]
+            'left_elbow_joint': 60,            # 肘关节 [deg]
         }
 
         # 滑块关节单独配置 (单位: 米, 控制初始坠落高度)

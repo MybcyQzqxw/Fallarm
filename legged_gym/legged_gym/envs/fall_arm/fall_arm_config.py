@@ -17,7 +17,7 @@ class FallArmCfg(BaseConfig):
         }
 
         # 坠落高度随机范围 [min, max] (m), 用于 reset 时随机化 slider_joint 位置
-        drop_height_range = [0.9, 1.0]
+        drop_height_range = [0.95, 1.0]
 
     class env:
         num_envs = 1024
@@ -163,8 +163,8 @@ class FallArmCfg(BaseConfig):
         reward_group_weights = [1, 0.1, 1, 1]
 
         arm_pose_not_in_contact_sigma = 0.5
-        low_max_slider_acc_threshold = 60
-        low_max_slider_acc_margin = 120
+        low_max_slider_acc_threshold = 100
+        low_max_slider_acc_margin = 60
         low_max_slider_acc_value_at_margin = 0.01
         high_min_shoulder_root_height_threshold = 0.48
         high_min_shoulder_root_height_margin = 0.05
@@ -173,7 +173,7 @@ class FallArmCfg(BaseConfig):
         class scales:
             termination = -1
             task_arm_pose_not_in_contact = 1
-            task_low_max_slider_acc = 20
+            task_low_max_slider_acc = 1
             task_high_min_shoulder_root_height = 1
 
     class constraints:
@@ -184,8 +184,8 @@ class FallArmCfg(BaseConfig):
 
         # target reward
         arm_pose_at_contact_sigma = 2.0
-        low_slider_acc_at_contact_threshold = 60
-        low_slider_acc_at_contact_margin = 120
+        low_slider_acc_at_contact_threshold = 100
+        low_slider_acc_at_contact_margin = 60
         low_slider_acc_at_contact_value_at_margin = 0.01
         high_shoulder_root_height_at_contact_threshold = 0.58
         high_shoulder_root_height_at_contact_margin = 0.15
@@ -199,7 +199,7 @@ class FallArmCfg(BaseConfig):
             regu_smoothness = -1e-1
             regu_torques = -1e-5
             regu_joint_power = -1e-3
-            regu_dof_pos_limits = -1
+            regu_dof_pos_limits = -5
             regu_dof_vel_limits = -5
 
             # style reward
@@ -296,4 +296,4 @@ class FallArmCfgPPO(BaseConfig):
         load_run = -1  # -1 = last run
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
-        max_iterations = 50000  # number of policy updates
+        max_iterations = 12000  # number of policy updates

@@ -93,7 +93,7 @@ class FallArm(BaseTask):
 
             # 每个子步刷新接触力, 累积峰值和接触状态
             self.gym.refresh_net_contact_force_tensor(self.sim)
-            substep_force = torch.norm(self.contact_forces[:, self.end_effector_idx, :], dim=-1)
+            substep_force = torch.norm(self.contact_forces[:, self.end_idx, :], dim=-1)
             self.ee_in_contact = torch.maximum(self.ee_in_contact, (substep_force > 0.1).float())
             # 滑块加速度: 子步间速度差 / 子步时间步长
             current_slider_vel = self.dof_vel[:, self.slider_dof_idx]
@@ -101,7 +101,7 @@ class FallArm(BaseTask):
             self.max_slider_acc = torch.maximum(self.max_slider_acc, substep_slider_acc)
             self.max_slider_acc_in_one_step = torch.maximum(self.max_slider_acc_in_one_step, substep_slider_acc)
             prev_slider_vel = current_slider_vel.clone()
-            self.max_shoulder_pitch_torque = torch.maximum(self.max_shoulder_pitch_torque, torch.abs(self.torques[:, self.shoulder_pitch_idx]))
+            self.max_shoulder_pitch_torque = torch.maximum(self.max_shoulder_pitch_torque, torch.abs(self.torques[:, self.shoulder_pitch_dof_idx]))
             # use DOF-index for accessing torques (self.torques is DOF-indexed)
             self.max_elbow_torque = torch.maximum(self.max_elbow_torque, torch.abs(self.torques[:, self.elbow_dof_idx]))
             self.min_shoulder_root_height = torch.minimum(self.min_shoulder_root_height, self.dof_pos[:, self.slider_dof_idx])
@@ -130,7 +130,7 @@ class FallArm(BaseTask):
         self.real_episode_length_buf += 1
 
         # 末端执行器位置 (debug viz + 奖励函数共用)
-        self.end_effector_pos[:] = self.rigid_body_states[:, self.end_effector_idx, :3]
+        self.end_effector_pos[:] = self.rigid_body_states[:, self.end_idx, :3]
 
         # 接触检测 & 回合级统计量已在 decimation 子步循环中完成累积
 
@@ -361,15 +361,22 @@ class FallArm(BaseTask):
             self.end_indices[i] = self.gym.find_actor_rigid_body_handle(
                 self.envs[0], self.actor_handles[0], end_names[i]
             )
+        self.end_idx = self.end_indices[0].item()
+        print(f"Identified end-effector body index: {self.end_idx} (name: {body_names[self.end_idx]})")
 
         # ---------- DOF / rigid body 标量索引 (动态查找, 不假设顺序) ----------
         self.slider_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_root' in n)
+        print(f"Identified slider DOF index: {self.slider_dof_idx} (name: {self.dof_names[self.slider_dof_idx]})")
         self.arm_dof_indices = [i for i in range(self.num_dofs) if i != self.slider_dof_idx]
-        self.shoulder_pitch_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_pitch' in n)
-        self.shoulder_roll_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_roll' in n)
-        self.shoulder_yaw_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_yaw' in n)
+        print(f"Identified arm DOF indices: {self.arm_dof_indices} (names: {[self.dof_names[i] for i in self.arm_dof_indices]})")
+        self.shoulder_pitch_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_pitch' in n)
+        print(f"Identified shoulder_pitch DOF index: {self.shoulder_pitch_dof_idx} (name: {self.dof_names[self.shoulder_pitch_dof_idx]})")
+        self.shoulder_roll_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_roll' in n)
+        print(f"Identified shoulder_roll DOF index: {self.shoulder_roll_dof_idx} (name: {self.dof_names[self.shoulder_roll_dof_idx]})")
+        self.shoulder_yaw_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_yaw' in n)
+        print(f"Identified shoulder_yaw DOF index: {self.shoulder_yaw_dof_idx} (name: {self.dof_names[self.shoulder_yaw_dof_idx]})")
         self.elbow_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'elbow' in n)
-        self.end_effector_idx = self.end_indices[0].item()
+        print(f"Identified elbow DOF index: {self.elbow_dof_idx} (name: {self.dof_names[self.elbow_dof_idx]})")
 
     def _get_env_origins(self):
         # 为每个机器人实例分配一个不重叠的初始位置
@@ -575,6 +582,8 @@ class FallArm(BaseTask):
                 if self.cfg.control.control_type in ['P', 'V']:
                     print(f'PD gain of joint {name} were not defined, setting them to zero')
         self.default_dof_pos = self.default_dof_pos.unsqueeze(0)
+        print({self.default_dof_pos})
+        print("Default DOF positions:", {self.dof_names[i]: self.default_dof_pos[0, i].item() for i in range(self.num_dofs)})
 
         # 随机化 kp、kd、actuation_offset、motor_strength
         self.Kp_factors = torch.ones(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
@@ -935,7 +944,6 @@ class FallArm(BaseTask):
 
         # 判断哪些环境"通过"了本回合的考核:
         #   min_shoulder_root_height[i] 记录了环境 i 整个回合中 shoulder_root 的最低高度
-        #   如果最低高度 > 阈值, 说明策略全程都维持住了, 算"通过"
         passed = (self.min_shoulder_root_height[env_ids] > self.cfg.curriculum.min_shoulder_root_height_lower_threshold) & (self.min_shoulder_root_height[env_ids] < self.cfg.curriculum.min_shoulder_root_height_upper_threshold)
 
         # 只对通过考核的环境增加难度 (未通过的保持当前难度继续练)
@@ -1046,22 +1054,21 @@ class FallArm(BaseTask):
         ).float()
 
     def _reward_arm_roll_yaw_deviation(self):
-        roll_yaw_pos = self.dof_pos[:, [self.shoulder_roll_idx, self.shoulder_yaw_idx]]
-        roll_yaw_default = self.default_dof_pos[:, [self.shoulder_roll_idx, self.shoulder_yaw_idx]]
+        roll_yaw_pos = self.dof_pos[:, [self.shoulder_roll_dof_idx, self.shoulder_yaw_dof_idx]]
+        roll_yaw_default = self.default_dof_pos[:, [self.shoulder_roll_dof_idx, self.shoulder_yaw_dof_idx]]
         deviation = torch.sum(torch.square(roll_yaw_pos - roll_yaw_default), dim=1)
         reward = torch.exp(-deviation / self.cfg.constraints.arm_roll_yaw_deviation_sigma)
         return reward
 
-    def _reward_elbow_pos(self):
-        elbow_pos = self.dof_pos[:, self.elbow_dof_idx]
-        elbow_pos_reward = tolerance(
-            elbow_pos,
-            bounds=(self.cfg.constraints.elbow_pos_lower_threshold,
-                    self.cfg.constraints.elbow_pos_upper_threshold),
-            margin=self.cfg.constraints.elbow_pos_margin,
-            value_at_margin=self.cfg.constraints.elbow_pos_value_at_margin,
+    def _reward_elbow_dof_pos(self):
+        elbow_dof_pos = self.dof_pos[:, self.elbow_dof_idx]
+        elbow_dof_pos_reward = tolerance(
+            elbow_dof_pos,
+            bounds=(self.cfg.constraints.elbow_dof_pos_lower_threshold, np.inf),
+            margin=self.cfg.constraints.elbow_dof_pos_margin,
+            value_at_margin=self.cfg.constraints.elbow_dof_pos_value_at_margin,
         )
-        return elbow_pos_reward
+        return elbow_dof_pos_reward
 
     # target reward
 
@@ -1082,11 +1089,14 @@ class FallArm(BaseTask):
         return self.ee_in_contact * acc_reward
 
     def _reward_high_shoulder_root_height_at_contact(self):
-        height_reward = tolerance(
-            self.shoulder_root_height,
-            bounds=(self.cfg.constraints.high_shoulder_root_height_at_contact_lower_threshold,
-                    self.cfg.constraints.high_shoulder_root_height_at_contact_upper_threshold),
-            margin=self.cfg.constraints.high_shoulder_root_height_at_contact_margin,
-            value_at_margin=self.cfg.constraints.high_shoulder_root_height_at_contact_value_at_margin,
-        )
+        # height_reward = tolerance(
+        #     self.shoulder_root_height,
+        #     bounds=(self.cfg.constraints.high_shoulder_root_height_at_contact_lower_threshold,
+        #             self.cfg.constraints.high_shoulder_root_height_at_contact_upper_threshold),
+        #     margin=self.cfg.constraints.high_shoulder_root_height_at_contact_margin,
+        #     value_at_margin=self.cfg.constraints.high_shoulder_root_height_at_contact_value_at_margin,
+        # )
+        threshold = self.cfg.constraints.high_shoulder_root_height_at_contact_threshold
+        sigma = self.cfg.constraints.high_shoulder_root_height_at_contact_sigma
+        height_reward = torch.exp(-((self.shoulder_root_height - threshold) / sigma)**2)
         return self.ee_in_contact * height_reward

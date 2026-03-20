@@ -163,13 +163,13 @@ class FallArmCfg(BaseConfig):
         num_reward_groups = len(reward_groups)
         reward_group_weights = [1, 0.01, 1, 1]
 
-        arm_pose_not_in_contact_sigma = 2.0
+        arm_pose_not_in_contact_sigma = 0.01
         low_max_slider_acc_threshold = 100
-        low_max_slider_acc_margin = 200
+        low_max_slider_acc_margin = 100
         low_max_slider_acc_value_at_margin = 0.01
         high_min_shoulder_root_height_lower_threshold = 0.45
         high_min_shoulder_root_height_upper_threshold = 0.50
-        high_min_shoulder_root_height_margin = 0.2
+        high_min_shoulder_root_height_margin = 0.45
         high_min_shoulder_root_height_value_at_margin = 0.01
 
         class scales:
@@ -182,21 +182,20 @@ class FallArmCfg(BaseConfig):
         # style reward
         low_max_shoulder_pitch_torque_sigma = 150.0
         low_max_elbow_torque_sigma = 150.0
-        arm_roll_yaw_deviation_sigma = 2.0
+        arm_roll_yaw_deviation_sigma = 0.01
         elbow_dof_pos_lower_threshold = 1.0
-        elbow_dof_pos_margin = 0.5
+        elbow_dof_pos_margin = 0.9
         elbow_dof_pos_value_at_margin = 0.01
 
         # target reward
-        arm_pose_at_contact_sigma = 2.0
         low_slider_acc_at_contact_threshold = 100
-        low_slider_acc_at_contact_margin = 200
+        low_slider_acc_at_contact_margin = 100
         low_slider_acc_at_contact_value_at_margin = 0.01
         # high_shoulder_root_height_at_contact_lower_threshold = 0.50
         # high_shoulder_root_height_at_contact_upper_threshold = 0.60
         # high_shoulder_root_height_at_contact_margin = 0.30
         # high_shoulder_root_height_at_contact_value_at_margin = 0.01
-        high_shoulder_root_height_at_contact_threshold = 0.55
+        high_shoulder_root_height_at_contact_threshold = 0.50
         high_shoulder_root_height_at_contact_sigma = 0.05
 
         class scales:
@@ -218,7 +217,6 @@ class FallArmCfg(BaseConfig):
             style_elbow_dof_pos = 10
 
             # target reward
-            target_arm_pose_at_contact = 10
             target_low_slider_acc_at_contact = 10
             target_high_shoulder_root_height_at_contact = 10
 

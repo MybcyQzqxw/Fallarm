@@ -214,6 +214,30 @@ class FallArm(BaseTask):
         dof_props_asset = self.gym.get_asset_dof_properties(robot_asset)
         rigid_shape_props_asset = self.gym.get_asset_rigid_shape_properties(robot_asset)
 
+        # Debug: inspect rigid shape prop fields to determine available attributes
+        try:
+            if len(rigid_shape_props_asset) > 0:
+                rsp0 = rigid_shape_props_asset[0]
+                try:
+                    print("Rigid shape prop type:", type(rsp0))
+                except Exception:
+                    pass
+                try:
+                    print("Rigid shape prop dir:", dir(rsp0))
+                except Exception as e:
+                    print("Could not dir() rigid shape prop:", e)
+                # try to print a few common attributes if present
+                for a in [
+                    'isTrigger', 'simulate', 'flags', 'collisionFilterGroup', 'collisionFilterMask', 'friction', 'restitution'
+                ]:
+                    if hasattr(rsp0, a):
+                        try:
+                            print(f"Rigid shape prop.{a}:", getattr(rsp0, a))
+                        except Exception:
+                            print(f"Rigid shape prop.{a}: <unreadable>")
+        except Exception as e:
+            print("Failed to inspect rigid_shape_props_asset:", e)
+
         print("Bodies:", self.gym.get_asset_rigid_body_count(robot_asset))
         print("DOFs:", self.gym.get_asset_dof_count(robot_asset))
         print("Joints:", self.gym.get_asset_joint_count(robot_asset))
@@ -239,6 +263,8 @@ class FallArm(BaseTask):
             print("Joint names: API not available in this gym build")
 
         body_names = self.gym.get_asset_rigid_body_names(robot_asset)
+        # expose body names for shape processing
+        self.body_names = body_names
         self.dof_names = self.gym.get_asset_dof_names(robot_asset)
         self.num_bodies = len(body_names)
         self.num_dofs = len(self.dof_names)
@@ -424,6 +450,7 @@ class FallArm(BaseTask):
     # =====================================================================
 
     def _process_rigid_shape_props(self, props, env_id):
+        # allow randomizing friction/restitution as before
         if self.cfg.domain_rand.randomize_friction:
             if env_id == 0:
                 # prepare friction randomization
@@ -439,6 +466,48 @@ class FallArm(BaseTask):
                 self.restitution_coeffs = torch_rand_float(restitution_range[0], restitution_range[1], (self.num_envs, 1), device=self.device)
             for s in range(len(props)):
                 props[s].restitution = self.restitution_coeffs[env_id]
+
+        # Make base body shapes non-colliding: attempt to map each shape to a body index
+        try:
+            base_name = self.cfg.asset.base_name
+            # try to find a body index attribute on each shape; if not available and counts match, assume 1:1 mapping
+            for si, sp in enumerate(props):
+                body_idx = None
+                for attr in ('body_index', 'body', 'body_idx', 'link', 'link_index', 'shape_body_index'):
+                    if hasattr(sp, attr):
+                        try:
+                            val = getattr(sp, attr)
+                            body_idx = int(val)
+                            break
+                        except Exception:
+                            body_idx = None
+                if body_idx is None and hasattr(self, 'body_names') and len(props) == len(self.body_names):
+                    body_idx = si
+                if body_idx is not None:
+                    try:
+                        bname = self.body_names[body_idx]
+                    except Exception:
+                        bname = ''
+                    if base_name in bname:
+                        # disable collisions by clearing filter or setting properties to non-colliding
+                        if hasattr(sp, 'filter'):
+                            try:
+                                # try to set filter to zero (no collisions)
+                                sp.filter = 0
+                            except Exception:
+                                try:
+                                    if hasattr(sp.filter, 'mask'):
+                                        sp.filter.mask = 0
+                                except Exception:
+                                    pass
+                        # also set contact offsets to large negative or zero restitution to reduce interaction
+                        try:
+                            if hasattr(sp, 'contact_offset'):
+                                sp.contact_offset = 0.0
+                        except Exception:
+                            pass
+        except Exception:
+            pass
 
         return props
 

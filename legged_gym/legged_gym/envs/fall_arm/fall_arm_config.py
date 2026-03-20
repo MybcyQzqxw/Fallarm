@@ -155,8 +155,8 @@ class FallArmCfg(BaseConfig):
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
         action_rescale_decrement = 0.005     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.25           # 最小动作缩放
-        min_shoulder_root_height_lower_threshold = 0.40         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
-        min_shoulder_root_height_upper_threshold = 0.50         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
+        min_shoulder_root_height_lower_threshold = 0.45         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
+        min_shoulder_root_height_upper_threshold = 0.55         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
 
     class rewards:
         reward_groups = ['task', 'regu', 'style', 'target']
@@ -167,9 +167,9 @@ class FallArmCfg(BaseConfig):
         low_max_slider_acc_threshold = 50
         low_max_slider_acc_margin = 150
         low_max_slider_acc_value_at_margin = 0.01
-        high_min_shoulder_root_height_lower_threshold = 0.40
-        high_min_shoulder_root_height_upper_threshold = 0.50
-        high_min_shoulder_root_height_margin = 0.40
+        high_min_shoulder_root_height_lower_threshold = 0.45
+        high_min_shoulder_root_height_upper_threshold = 0.55
+        high_min_shoulder_root_height_margin = 0.45
         high_min_shoulder_root_height_value_at_margin = 0.01
 
         class scales:
@@ -197,7 +197,7 @@ class FallArmCfg(BaseConfig):
         # high_shoulder_root_height_at_contact_margin = 0.30
         # high_shoulder_root_height_at_contact_value_at_margin = 0.01
         high_shoulder_root_height_at_contact_threshold = 0.58
-        high_shoulder_root_height_at_contact_sigma = 0.01
+        high_shoulder_root_height_at_contact_sigma = 0.05
 
         class scales:
             # regularization reward

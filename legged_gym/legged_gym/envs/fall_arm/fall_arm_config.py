@@ -186,6 +186,7 @@ class FallArmCfg(BaseConfig):
         elbow_dof_pos_lower_threshold = 1.0
         elbow_dof_pos_margin = 0.9
         elbow_dof_pos_value_at_margin = 0.01
+        no_releave_after_contact_threshold = 5  # [frames] 从接触开始的无接触候选必须持续至少这个帧数才被惩罚
 
         # target reward
         low_slider_acc_at_contact_threshold = 100
@@ -215,6 +216,7 @@ class FallArmCfg(BaseConfig):
             style_penalised_contact = -10
             style_arm_roll_yaw_deviation = 10
             style_elbow_dof_pos = 10
+            style_no_releave_after_contact = -10
 
             # target reward
             target_low_slider_acc_at_contact = 10

@@ -72,7 +72,7 @@ class FallArm(BaseTask):
             self.curriculum_forces[:, self.shoulder_root_index, 2] = self.force.squeeze(1)
 
         # 每步开始前清零子步累积量
-        self.ee_in_contact[:] = 0.
+        self.ee_in_contact[:] = False
         self.max_slider_acc_in_one_step[:] = 0.
         prev_slider_vel = self.dof_vel[:, self.slider_dof_idx].clone()
 
@@ -94,7 +94,8 @@ class FallArm(BaseTask):
             # 每个子步刷新接触力, 累积峰值和接触状态
             self.gym.refresh_net_contact_force_tensor(self.sim)
             substep_force = torch.norm(self.contact_forces[:, self.end_idx, :], dim=-1)
-            self.ee_in_contact = torch.maximum(self.ee_in_contact, (substep_force > 0.1).float())
+            # accumulate per-substep contact into a per-step boolean flag (in-place to keep tensor identity)
+            self.ee_in_contact[:] |= (substep_force > 0.1)
             # 滑块加速度: 子步间速度差 / 子步时间步长
             current_slider_vel = self.dof_vel[:, self.slider_dof_idx]
             substep_slider_acc = torch.abs(current_slider_vel - prev_slider_vel) / self.sim_params.dt
@@ -136,6 +137,21 @@ class FallArm(BaseTask):
 
         # 当前步 shoulder_root 高度 (用于每步奖励函数)
         self.shoulder_root_height[:] = self.dof_pos[:, self.slider_dof_idx]
+
+        # 更新连续无接触计数器及离地候选标志
+        contact_mask = self.ee_in_contact
+        no_contact_mask = ~contact_mask
+        # 若本步有接触：计数清零，并清除候选（再次接触取消此前的离地候选）
+        if contact_mask.any():
+            self.ee_no_contact_counter[contact_mask] = 0
+            self.ee_left_candidate[contact_mask] = False
+        # 若本步无接触：计数自增
+        if no_contact_mask.any():
+            self.ee_no_contact_counter[no_contact_mask] += 1
+        # 在刚从接触变为无接触的帧（即 prev_ee_in_contact 为 True 且 本帧无接触）标记为离地候选
+        start_candidate = self.prev_ee_in_contact & no_contact_mask
+        if start_candidate.any():
+            self.ee_left_candidate[start_candidate] = True
 
         self.check_termination()
         self.compute_reward()
@@ -539,7 +555,10 @@ class FallArm(BaseTask):
 
         # ---------- 末端执行器 & 接触 buffer ----------
         self.end_effector_pos = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float)
-        self.ee_in_contact = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        self.ee_in_contact = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool, requires_grad=False)
+        self.prev_ee_in_contact = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool, requires_grad=False)
+        self.ee_no_contact_counter = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device, requires_grad=False)
+        self.ee_left_candidate = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device, requires_grad=False)
         self.max_slider_acc = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.max_slider_acc_in_one_step = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.max_shoulder_pitch_torque = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
@@ -769,6 +788,8 @@ class FallArm(BaseTask):
         self.obs_buf = torch.cat((self.obs_buf[:, self.num_one_step_obs:self.actor_proprioceptive_obs_length], current_obs), dim=-1)
         self.obs_buf = torch.nan_to_num(self.obs_buf, 0.0)
 
+        self.prev_ee_in_contact = self.ee_in_contact.clone()
+
     def _get_noise_scale_vec(self, cfg):
         # 构建与观测维度一致的噪声缩放向量 (13维)
         noise_vec = torch.zeros(self.num_one_step_obs, device=self.device)
@@ -842,6 +863,12 @@ class FallArm(BaseTask):
         self.episode_length_buf[env_ids] = 0
         self.real_episode_length_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1
+
+        # 清理接触/离地相关状态，避免 reset 导致下一帧误判
+        self.ee_in_contact[env_ids] = False
+        self.prev_ee_in_contact[env_ids] = False
+        self.ee_no_contact_counter[env_ids] = 0
+        self.ee_left_candidate[env_ids] = False
 
         # 回合奖励统计
         for key in self.episode_sums.keys():
@@ -983,8 +1010,8 @@ class FallArm(BaseTask):
         arm_default = self.default_dof_pos[:, self.arm_dof_indices]
         deviation = torch.sum(torch.square(arm_pos - arm_default), dim=1)
         pose_reward = torch.exp(-deviation / self.cfg.rewards.arm_pose_not_in_contact_sigma)
-        not_in_contact = 1.0 - self.ee_in_contact
-        return not_in_contact * pose_reward + self.ee_in_contact
+        not_in_contact = (~self.ee_in_contact).float()
+        return not_in_contact * pose_reward + self.ee_in_contact.float()
 
     def _reward_low_max_slider_acc(self):
         return tolerance(
@@ -1061,6 +1088,16 @@ class FallArm(BaseTask):
         reward = torch.exp(-deviation / self.cfg.constraints.arm_roll_yaw_deviation_sigma)
         return reward
 
+    def _reward_no_releave_after_contact(self):
+        # 只有在“从接触开始的无接触候选”且无接触已持续至少阈值帧时才惩罚
+        threshold = int(self.cfg.constraints.no_releave_after_contact_threshold)
+        mask = self.ee_left_candidate & (self.ee_no_contact_counter >= threshold)
+        # 一旦判定为离地事件，将候选标记清除并重置计数器，避免重复惩罚同一次事件
+        if mask.any():
+            self.ee_left_candidate[mask] = False
+            self.ee_no_contact_counter[mask] = 0
+        return mask.float()
+
     def _reward_elbow_dof_pos(self):
         elbow_dof_pos = self.dof_pos[:, self.elbow_dof_idx]
         elbow_dof_pos_reward = tolerance(
@@ -1080,7 +1117,7 @@ class FallArm(BaseTask):
             margin=self.cfg.constraints.low_slider_acc_at_contact_margin,
             value_at_margin=self.cfg.constraints.low_slider_acc_at_contact_value_at_margin,
         )
-        return self.ee_in_contact * acc_reward
+        return self.ee_in_contact.float() * acc_reward
 
     def _reward_high_shoulder_root_height_at_contact(self):
         # height_reward = tolerance(
@@ -1093,4 +1130,4 @@ class FallArm(BaseTask):
         threshold = self.cfg.constraints.high_shoulder_root_height_at_contact_threshold
         sigma = self.cfg.constraints.high_shoulder_root_height_at_contact_sigma
         height_reward = torch.exp(-((self.shoulder_root_height - threshold) / sigma)**2)
-        return self.ee_in_contact * height_reward
+        return self.ee_in_contact.float() * height_reward

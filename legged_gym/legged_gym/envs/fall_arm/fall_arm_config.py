@@ -155,7 +155,7 @@ class FallArmCfg(BaseConfig):
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
         action_rescale_decrement = 0.005     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.25           # 最小动作缩放
-        min_shoulder_root_height_lower_threshold = 0.45         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
+        min_shoulder_root_height_lower_threshold = 0.40         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
         min_shoulder_root_height_upper_threshold = 0.50         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
 
     class rewards:
@@ -164,12 +164,12 @@ class FallArmCfg(BaseConfig):
         reward_group_weights = [1, 0.01, 1, 1]
 
         arm_pose_not_in_contact_sigma = 0.01
-        low_max_slider_acc_threshold = 100
-        low_max_slider_acc_margin = 100
+        low_max_slider_acc_threshold = 50
+        low_max_slider_acc_margin = 150
         low_max_slider_acc_value_at_margin = 0.01
-        high_min_shoulder_root_height_lower_threshold = 0.45
+        high_min_shoulder_root_height_lower_threshold = 0.40
         high_min_shoulder_root_height_upper_threshold = 0.50
-        high_min_shoulder_root_height_margin = 0.45
+        high_min_shoulder_root_height_margin = 0.40
         high_min_shoulder_root_height_value_at_margin = 0.01
 
         class scales:
@@ -184,19 +184,19 @@ class FallArmCfg(BaseConfig):
         low_max_elbow_torque_sigma = 150.0
         arm_roll_yaw_deviation_sigma = 0.01
         elbow_dof_pos_lower_threshold = 1.0
-        elbow_dof_pos_margin = 0.9
+        elbow_dof_pos_margin = 1.0
         elbow_dof_pos_value_at_margin = 0.01
         no_releave_after_contact_threshold = 5  # [frames] 从接触开始的无接触候选必须持续至少这个帧数才被惩罚
 
         # target reward
-        low_slider_acc_at_contact_threshold = 100
-        low_slider_acc_at_contact_margin = 100
+        low_slider_acc_at_contact_threshold = 50
+        low_slider_acc_at_contact_margin = 150
         low_slider_acc_at_contact_value_at_margin = 0.01
         # high_shoulder_root_height_at_contact_lower_threshold = 0.50
         # high_shoulder_root_height_at_contact_upper_threshold = 0.60
         # high_shoulder_root_height_at_contact_margin = 0.30
         # high_shoulder_root_height_at_contact_value_at_margin = 0.01
-        high_shoulder_root_height_at_contact_threshold = 0.50
+        high_shoulder_root_height_at_contact_threshold = 0.55
         high_shoulder_root_height_at_contact_sigma = 0.05
 
         class scales:

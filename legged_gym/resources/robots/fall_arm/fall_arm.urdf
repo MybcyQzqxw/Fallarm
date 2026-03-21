@@ -17,12 +17,14 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
       </material>
     </visual>
+    <!-- collision removed so base_framework is non-colliding (allows other links to pass through)
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
         <mesh filename="meshes/base_framework.stl" />
       </geometry>
     </collision>
+    -->
   </link>
   <link name="left_shoulder_root_link">
     <inertial>

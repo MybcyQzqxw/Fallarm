@@ -467,48 +467,6 @@ class FallArm(BaseTask):
             for s in range(len(props)):
                 props[s].restitution = self.restitution_coeffs[env_id]
 
-        # Make base body shapes non-colliding: attempt to map each shape to a body index
-        try:
-            base_name = self.cfg.asset.base_name
-            # try to find a body index attribute on each shape; if not available and counts match, assume 1:1 mapping
-            for si, sp in enumerate(props):
-                body_idx = None
-                for attr in ('body_index', 'body', 'body_idx', 'link', 'link_index', 'shape_body_index'):
-                    if hasattr(sp, attr):
-                        try:
-                            val = getattr(sp, attr)
-                            body_idx = int(val)
-                            break
-                        except Exception:
-                            body_idx = None
-                if body_idx is None and hasattr(self, 'body_names') and len(props) == len(self.body_names):
-                    body_idx = si
-                if body_idx is not None:
-                    try:
-                        bname = self.body_names[body_idx]
-                    except Exception:
-                        bname = ''
-                    if base_name in bname:
-                        # disable collisions by clearing filter or setting properties to non-colliding
-                        if hasattr(sp, 'filter'):
-                            try:
-                                # try to set filter to zero (no collisions)
-                                sp.filter = 0
-                            except Exception:
-                                try:
-                                    if hasattr(sp.filter, 'mask'):
-                                        sp.filter.mask = 0
-                                except Exception:
-                                    pass
-                        # also set contact offsets to large negative or zero restitution to reduce interaction
-                        try:
-                            if hasattr(sp, 'contact_offset'):
-                                sp.contact_offset = 0.0
-                        except Exception:
-                            pass
-        except Exception:
-            pass
-
         return props
 
     def _process_dof_props(self, props, env_id):

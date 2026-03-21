@@ -151,9 +151,9 @@ class FallArmCfg(BaseConfig):
     class curriculum:
         use_curriculum = True
         force_initial = 100.0               # [N] 初始辅助上升力 (接近完全抵消重力)
-        force_decrement = 1.0              # [N] 通过课程后每次减小的力
+        force_decrement = 0.5              # [N] 通过课程后每次减小的力
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
-        action_rescale_decrement = 0.005     # 通过课程后每次减小的动作缩放
+        action_rescale_decrement = 0.0025     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.25           # 最小动作缩放
         min_shoulder_root_height_lower_threshold = 0.40         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
         min_shoulder_root_height_upper_threshold = 0.45         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
@@ -305,4 +305,4 @@ class FallArmCfgPPO(BaseConfig):
         load_run = -1  # -1 = last run
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
-        max_iterations = 12000  # number of policy updates
+        max_iterations = 30000  # number of policy updates

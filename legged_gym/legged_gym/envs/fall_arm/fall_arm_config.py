@@ -151,9 +151,9 @@ class FallArmCfg(BaseConfig):
     class curriculum:
         use_curriculum = True
         force_initial = 100.0               # [N] 初始辅助上升力 (接近完全抵消重力)
-        force_decrement = 1.0              # [N] 通过课程后每次减小的力
+        force_decrement = 2.0              # [N] 通过课程后每次减小的力
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
-        action_rescale_decrement = 0.005     # 通过课程后每次减小的动作缩放
+        action_rescale_decrement = 0.01     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.25           # 最小动作缩放
         min_shoulder_root_height_lower_threshold = 0.45         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
         min_shoulder_root_height_upper_threshold = 0.50         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
@@ -161,7 +161,7 @@ class FallArmCfg(BaseConfig):
     class rewards:
         reward_groups = ['task', 'regu', 'style', 'target']
         num_reward_groups = len(reward_groups)
-        reward_group_weights = [1, 0.1, 1, 1]
+        reward_group_weights = [1, 0.5, 1, 1]
 
         arm_pose_not_in_contact_sigma = 0.01
         low_max_slider_acc_threshold = 50
@@ -214,8 +214,8 @@ class FallArmCfg(BaseConfig):
             style_low_max_shoulder_pitch_torque = 10
             style_low_max_elbow_torque = 10
             style_penalised_contact = -10
-            style_arm_roll_yaw_deviation = 20
-            style_elbow_dof_pos = 20
+            style_arm_roll_yaw_deviation = 10
+            style_elbow_dof_pos = 10
             style_no_releave_after_contact = -10
 
             # target reward

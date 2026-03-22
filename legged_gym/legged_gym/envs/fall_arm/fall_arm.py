@@ -214,30 +214,6 @@ class FallArm(BaseTask):
         dof_props_asset = self.gym.get_asset_dof_properties(robot_asset)
         rigid_shape_props_asset = self.gym.get_asset_rigid_shape_properties(robot_asset)
 
-        # Debug: inspect rigid shape prop fields to determine available attributes
-        try:
-            if len(rigid_shape_props_asset) > 0:
-                rsp0 = rigid_shape_props_asset[0]
-                try:
-                    print("Rigid shape prop type:", type(rsp0))
-                except Exception:
-                    pass
-                try:
-                    print("Rigid shape prop dir:", dir(rsp0))
-                except Exception as e:
-                    print("Could not dir() rigid shape prop:", e)
-                # try to print a few common attributes if present
-                for a in [
-                    'isTrigger', 'simulate', 'flags', 'collisionFilterGroup', 'collisionFilterMask', 'friction', 'restitution'
-                ]:
-                    if hasattr(rsp0, a):
-                        try:
-                            print(f"Rigid shape prop.{a}:", getattr(rsp0, a))
-                        except Exception:
-                            print(f"Rigid shape prop.{a}: <unreadable>")
-        except Exception as e:
-            print("Failed to inspect rigid_shape_props_asset:", e)
-
         print("Bodies:", self.gym.get_asset_rigid_body_count(robot_asset))
         print("DOFs:", self.gym.get_asset_dof_count(robot_asset))
         print("Joints:", self.gym.get_asset_joint_count(robot_asset))

@@ -1008,14 +1008,6 @@ class FallArm(BaseTask):
 
     # task reward
 
-    def _reward_arm_pose_not_in_contact(self):
-        arm_pos = self.dof_pos[:, self.arm_dof_indices]
-        arm_default = self.default_dof_pos[:, self.arm_dof_indices]
-        deviation = torch.sum(torch.square(arm_pos - arm_default), dim=1)
-        pose_reward = torch.exp(-deviation / self.cfg.rewards.arm_pose_not_in_contact_sigma)
-        not_in_contact = (~self.ee_in_contact).float()
-        return not_in_contact * pose_reward + self.ee_in_contact.float()
-
     def _reward_low_max_slider_acc(self):
         return tolerance(
             self.max_slider_acc,
@@ -1072,24 +1064,11 @@ class FallArm(BaseTask):
 
     # style reward
 
-    def _reward_low_max_shoulder_pitch_torque(self):
-        return torch.exp(-self.max_shoulder_pitch_torque / self.cfg.constraints.low_max_shoulder_pitch_torque_sigma)
-
-    def _reward_low_max_elbow_torque(self):
-        return torch.exp(-self.max_elbow_torque / self.cfg.constraints.low_max_elbow_torque_sigma)
-
     def _reward_penalised_contact(self):
         return torch.any(
             torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1,
             dim=1,
         ).float()
-
-    def _reward_arm_roll_yaw_deviation(self):
-        roll_yaw_pos = self.dof_pos[:, [self.shoulder_roll_dof_idx, self.shoulder_yaw_dof_idx]]
-        roll_yaw_default = self.default_dof_pos[:, [self.shoulder_roll_dof_idx, self.shoulder_yaw_dof_idx]]
-        deviation = torch.sum(torch.square(roll_yaw_pos - roll_yaw_default), dim=1)
-        reward = torch.exp(-deviation / self.cfg.constraints.arm_roll_yaw_deviation_sigma)
-        return reward
 
     def _reward_no_releave_after_contact(self):
         # 只有在“从接触开始的无接触候选”且无接触已持续至少阈值帧时才惩罚
@@ -1101,6 +1080,66 @@ class FallArm(BaseTask):
             self.ee_no_contact_counter[mask] = 0
         return mask.float()
 
+    def _reward_low_max_shoulder_pitch_torque(self):
+        return torch.exp(-self.max_shoulder_pitch_torque / self.cfg.constraints.low_max_shoulder_pitch_torque_sigma)
+
+    def _reward_low_max_elbow_torque(self):
+        return torch.exp(-self.max_elbow_torque / self.cfg.constraints.low_max_elbow_torque_sigma)
+
+    def _reward_arm_pose(self):
+        arm_pos = self.dof_pos[:, self.arm_dof_indices]
+        arm_default = self.default_dof_pos[:, self.arm_dof_indices]
+        deviation = torch.sum(torch.square(arm_pos - arm_default), dim=1)
+        sigma = float(self.cfg.constraints.arm_pose_sigma)
+        arm_pose_reward = torch.exp(-deviation / sigma)
+        return arm_pose_reward
+
+    def _reward_arm_roll_yaw_deviation(self):
+        roll_yaw_pos = self.dof_pos[:, [self.shoulder_roll_dof_idx, self.shoulder_yaw_dof_idx]]
+        roll_yaw_default = self.default_dof_pos[:, [self.shoulder_roll_dof_idx, self.shoulder_yaw_dof_idx]]
+        deviation = torch.sum(torch.square(roll_yaw_pos - roll_yaw_default), dim=1)
+        sigma = float(self.cfg.constraints.arm_roll_yaw_deviation_sigma)
+        safe = torch.exp(-deviation / sigma)
+        penalty = -(1.0 - safe)
+        return penalty
+
+    def _reward_ee_in_roll_proj_circle(self):
+        # 从刚体状态提取 roll 连杆位置和末端执行器位置（已在 post_physics_step 中维护 end_effector_pos）
+        # rigid_body_states 格式: (num_envs, num_bodies, 13) -> positions 在 :3
+        # shoulder_roll_indices 可能包含多个匹配条目；取第一个
+        if hasattr(self, 'shoulder_roll_indices') and self.shoulder_roll_indices.numel() > 0:
+            # 结果形状可能为 (num_envs, 1, 3)，squeeze 到 (num_envs, 3)
+            roll_pos = self.rigid_body_states[:, self.shoulder_roll_indices, :3]
+            if roll_pos.dim() == 3:
+                roll_pos = roll_pos.squeeze(1)
+        else:
+            # 回退：若未找到 shoulder_roll 索引，则使用 shoulder_root 作为近似
+            roll_pos = self.rigid_body_states[:, self.shoulder_root_index, :3]
+
+        ee_pos = self.end_effector_pos  # (num_envs, 3)
+
+        # 仅在 XY 平面上计算距离（即将位置投影到 z 平面）
+        diff_xy = ee_pos[:, :2] - roll_pos[:, :2]
+        dist = torch.norm(diff_xy, dim=1)
+
+        # 可在此处从 cfg 中读取 radius/margin，若未配置则使用默认值
+        try:
+            radius = float(self.cfg.rewards.ee_in_roll_proj_circle.radius)
+        except Exception:
+            radius = 0.05
+        try:
+            margin = float(self.cfg.rewards.ee_in_roll_proj_circle.margin)
+        except Exception:
+            margin = 0.15
+
+        # 计算奖励：内圈 1.0，边缘线性衰减，外圈 0.0
+        rewards = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        inside_mask = dist <= radius
+        near_mask = (dist > radius) & (dist < (radius + margin))
+        rewards[inside_mask] = 1.0
+        rewards[near_mask] = 1.0 - (dist[near_mask] - radius) / margin
+        return rewards
+
     def _reward_elbow_dof_pos(self):
         elbow_dof_pos = self.dof_pos[:, self.elbow_dof_idx]
         elbow_dof_pos_reward = tolerance(
@@ -1109,7 +1148,8 @@ class FallArm(BaseTask):
             margin=self.cfg.constraints.elbow_dof_pos_margin,
             value_at_margin=self.cfg.constraints.elbow_dof_pos_value_at_margin,
         )
-        return elbow_dof_pos_reward
+        penalty = -(1.0 - elbow_dof_pos_reward)
+        return penalty
 
     # target reward
 
@@ -1123,14 +1163,14 @@ class FallArm(BaseTask):
         return self.ee_in_contact.float() * acc_reward
 
     def _reward_high_shoulder_root_height_at_contact(self):
-        # height_reward = tolerance(
-        #     self.shoulder_root_height,
-        #     bounds=(self.cfg.constraints.high_shoulder_root_height_at_contact_lower_threshold,
-        #             self.cfg.constraints.high_shoulder_root_height_at_contact_upper_threshold),
-        #     margin=self.cfg.constraints.high_shoulder_root_height_at_contact_margin,
-        #     value_at_margin=self.cfg.constraints.high_shoulder_root_height_at_contact_value_at_margin,
-        # )
-        threshold = self.cfg.constraints.high_shoulder_root_height_at_contact_threshold
-        sigma = self.cfg.constraints.high_shoulder_root_height_at_contact_sigma
-        height_reward = torch.exp(-((self.shoulder_root_height - threshold) / sigma)**2)
+        height_reward = tolerance(
+            self.shoulder_root_height,
+            bounds=(self.cfg.constraints.high_shoulder_root_height_at_contact_lower_threshold,
+                    self.cfg.constraints.high_shoulder_root_height_at_contact_upper_threshold),
+            margin=self.cfg.constraints.high_shoulder_root_height_at_contact_margin,
+            value_at_margin=self.cfg.constraints.high_shoulder_root_height_at_contact_value_at_margin,
+        )
+        # threshold = self.cfg.constraints.high_shoulder_root_height_at_contact_threshold
+        # sigma = self.cfg.constraints.high_shoulder_root_height_at_contact_sigma
+        # height_reward = torch.exp(-((self.shoulder_root_height - threshold) / sigma)**2)
         return self.ee_in_contact.float() * height_reward

@@ -130,7 +130,11 @@ class FallArm(BaseTask):
         self.common_step_counter += 1
         self.real_episode_length_buf += 1
 
-        # 末端执行器位置 (debug viz + 奖励函数共用)
+        # 连杆位置
+        self.shoulder_pitch_pos[:] = self.rigid_body_states[:, self.shoulder_pitch_idx, :3]
+        self.shoulder_roll_pos[:] = self.rigid_body_states[:, self.shoulder_roll_idx, :3]
+        self.shoulder_yaw_pos[:] = self.rigid_body_states[:, self.shoulder_yaw_idx, :3]
+        self.elbow_pos[:] = self.rigid_body_states[:, self.elbow_idx, :3]
         self.end_effector_pos[:] = self.rigid_body_states[:, self.end_idx, :3]
 
         # 接触检测 & 回合级统计量已在 decimation 子步循环中完成累积
@@ -351,6 +355,8 @@ class FallArm(BaseTask):
             self.shoulder_pitch_indices[i] = self.gym.find_actor_rigid_body_handle(
                 self.envs[0], self.actor_handles[0], shoulder_pitch_names[i]
             )
+        self.shoulder_pitch_idx = self.shoulder_pitch_indices[0].item()
+        print(f"Identified shoulder_pitch body index: {self.shoulder_pitch_idx} (name: {body_names[self.shoulder_pitch_idx]})")
 
         shoulder_roll_names = [s for s in body_names if self.cfg.asset.shoulder_roll_name in s]
         self.shoulder_roll_indices = torch.zeros(len(shoulder_roll_names), dtype=torch.long, device=self.device, requires_grad=False)
@@ -358,6 +364,8 @@ class FallArm(BaseTask):
             self.shoulder_roll_indices[i] = self.gym.find_actor_rigid_body_handle(
                 self.envs[0], self.actor_handles[0], shoulder_roll_names[i]
             )
+        self.shoulder_roll_idx = self.shoulder_roll_indices[0].item()
+        print(f"Identified shoulder_roll body index: {self.shoulder_roll_idx} (name: {body_names[self.shoulder_roll_idx]})")
 
         shoulder_yaw_names = [s for s in body_names if self.cfg.asset.shoulder_yaw_name in s]
         self.shoulder_yaw_indices = torch.zeros(len(shoulder_yaw_names), dtype=torch.long, device=self.device, requires_grad=False)
@@ -365,6 +373,8 @@ class FallArm(BaseTask):
             self.shoulder_yaw_indices[i] = self.gym.find_actor_rigid_body_handle(
                 self.envs[0], self.actor_handles[0], shoulder_yaw_names[i]
             )
+        self.shoulder_yaw_idx = self.shoulder_yaw_indices[0].item()
+        print(f"Identified shoulder_yaw body index: {self.shoulder_yaw_idx} (name: {body_names[self.shoulder_yaw_idx]})")
 
         elbow_names = [s for s in body_names if self.cfg.asset.elbow_name in s]
         self.elbow_indices = torch.zeros(len(elbow_names), dtype=torch.long, device=self.device, requires_grad=False)
@@ -372,6 +382,8 @@ class FallArm(BaseTask):
             self.elbow_indices[i] = self.gym.find_actor_rigid_body_handle(
                 self.envs[0], self.actor_handles[0], elbow_names[i]
             )
+        self.elbow_idx = self.elbow_indices[0].item()
+        print(f"Identified elbow body index: {self.elbow_idx} (name: {body_names[self.elbow_idx]})")
 
         end_names = [s for s in body_names if self.cfg.asset.end_name in s]
         self.end_indices = torch.zeros(len(end_names), dtype=torch.long, device=self.device, requires_grad=False)
@@ -382,7 +394,6 @@ class FallArm(BaseTask):
         self.end_idx = self.end_indices[0].item()
         print(f"Identified end-effector body index: {self.end_idx} (name: {body_names[self.end_idx]})")
 
-        # ---------- DOF / rigid body 标量索引 (动态查找, 不假设顺序) ----------
         self.slider_dof_idx = next(i for i, n in enumerate(self.dof_names) if 'shoulder_root' in n)
         print(f"Identified slider DOF index: {self.slider_dof_idx} (name: {self.dof_names[self.slider_dof_idx]})")
         self.arm_dof_indices = [i for i in range(self.num_dofs) if i != self.slider_dof_idx]
@@ -557,6 +568,10 @@ class FallArm(BaseTask):
         )
 
         # ---------- 末端执行器 & 接触 buffer ----------
+        self.shoulder_pitch_pos = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float)
+        self.shoulder_roll_pos = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float)
+        self.shoulder_yaw_pos = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float)
+        self.elbow_pos = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float)
         self.end_effector_pos = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float)
         self.ee_in_contact = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool, requires_grad=False)
         self.prev_ee_in_contact = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool, requires_grad=False)
@@ -1103,48 +1118,25 @@ class FallArm(BaseTask):
         penalty = -(1.0 - safe)
         return penalty
 
-    def _reward_ee_in_roll_proj_circle(self):
-        # 从刚体状态提取 roll 连杆位置和末端执行器位置（已在 post_physics_step 中维护 end_effector_pos）
-        # rigid_body_states 格式: (num_envs, num_bodies, 13) -> positions 在 :3
-        # shoulder_roll_indices 可能包含多个匹配条目；取第一个
-        if hasattr(self, 'shoulder_roll_indices') and self.shoulder_roll_indices.numel() > 0:
-            # 结果形状可能为 (num_envs, 1, 3)，squeeze 到 (num_envs, 3)
-            roll_pos = self.rigid_body_states[:, self.shoulder_roll_indices, :3]
-            if roll_pos.dim() == 3:
-                roll_pos = roll_pos.squeeze(1)
-        else:
-            # 回退：若未找到 shoulder_roll 索引，则使用 shoulder_root 作为近似
-            roll_pos = self.rigid_body_states[:, self.shoulder_root_index, :3]
-
+    def _reward_ee_distance(self):
+        roll_pos = self.shoulder_roll_pos  # (num_envs, 3)
         ee_pos = self.end_effector_pos  # (num_envs, 3)
-
-        # 仅在 XY 平面上计算距离（即将位置投影到 z 平面）
         diff_xy = ee_pos[:, :2] - roll_pos[:, :2]
-        dist = torch.norm(diff_xy, dim=1)
+        distance = torch.norm(diff_xy, dim=1)
 
-        # 可在此处从 cfg 中读取 radius/margin，若未配置则使用默认值
-        try:
-            radius = float(self.cfg.rewards.ee_in_roll_proj_circle.radius)
-        except Exception:
-            radius = 0.05
-        try:
-            margin = float(self.cfg.rewards.ee_in_roll_proj_circle.margin)
-        except Exception:
-            margin = 0.15
-
-        # 计算奖励：内圈 1.0，边缘线性衰减，外圈 0.0
-        rewards = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
-        inside_mask = dist <= radius
-        near_mask = (dist > radius) & (dist < (radius + margin))
-        rewards[inside_mask] = 1.0
-        rewards[near_mask] = 1.0 - (dist[near_mask] - radius) / margin
-        return rewards
+        ee_in_circle_reward = tolerance(
+            distance,
+            bounds=(0.0, self.cfg.constraints.ee_distance_threshold),
+            margin=self.cfg.constraints.ee_distance_margin,
+            value_at_margin=self.cfg.constraints.ee_distance_value_at_margin,
+        )
+        return ee_in_circle_reward
 
     def _reward_elbow_dof_pos(self):
         elbow_dof_pos = self.dof_pos[:, self.elbow_dof_idx]
         elbow_dof_pos_reward = tolerance(
             elbow_dof_pos,
-            bounds=(self.cfg.constraints.elbow_dof_pos_lower_threshold, np.inf),
+            bounds=(self.cfg.constraints.elbow_dof_pos_threshold, np.inf),
             margin=self.cfg.constraints.elbow_dof_pos_margin,
             value_at_margin=self.cfg.constraints.elbow_dof_pos_value_at_margin,
         )

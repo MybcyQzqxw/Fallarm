@@ -183,7 +183,10 @@ class FallArmCfg(BaseConfig):
         low_max_elbow_torque_sigma = 150
         arm_pose_sigma = 0.1
         arm_roll_yaw_deviation_sigma = 0.02
-        elbow_dof_pos_lower_threshold = 1.3
+        ee_distance_threshold = 0.05
+        ee_distance_margin = 0.3
+        ee_distance_value_at_margin = 0.05
+        elbow_dof_pos_threshold = 1.3
         elbow_dof_pos_margin = 1.15
         elbow_dof_pos_value_at_margin = 0.1
 
@@ -191,23 +194,23 @@ class FallArmCfg(BaseConfig):
         low_slider_acc_at_contact_threshold = 100
         low_slider_acc_at_contact_margin = 200
         low_slider_acc_at_contact_value_at_margin = 0.1
-        high_shoulder_root_height_at_contact_lower_threshold = 0.55
-        high_shoulder_root_height_at_contact_upper_threshold = 0.60
-        high_shoulder_root_height_at_contact_margin = 0.30
+        high_shoulder_root_height_at_contact_lower_threshold = 0.52
+        high_shoulder_root_height_at_contact_upper_threshold = 0.58
+        high_shoulder_root_height_at_contact_margin = 0.27
         high_shoulder_root_height_at_contact_value_at_margin = 0.1
         # high_shoulder_root_height_at_contact_threshold = 0.55
         # high_shoulder_root_height_at_contact_sigma = 0.05
 
         class scales:
             # regularization reward
-            regu_dof_acc = -2.5e-6
-            regu_dof_vel = -1e-2
-            regu_action_rate = -1e0
-            regu_smoothness = -1e0
-            regu_torques = -2.5e-4
-            regu_joint_power = -2.5e-3
+            regu_dof_acc = -2.5e-7
+            regu_dof_vel = -1e-3
+            regu_action_rate = -1e-2
+            regu_smoothness = -1e-2
+            regu_torques = -2.5e-6
+            regu_joint_power = -2.5e-5
             regu_dof_pos_limits = -1e2
-            regu_dof_vel_limits = -1
+            regu_dof_vel_limits = -1e0
 
             # style reward
             style_penalised_contact = -10
@@ -216,6 +219,7 @@ class FallArmCfg(BaseConfig):
             style_low_max_elbow_torque = 10
             style_arm_pose = 10
             style_arm_roll_yaw_deviation = 10
+            style_ee_distance = 30
             style_elbow_dof_pos = 10
 
             # target reward
@@ -297,7 +301,7 @@ class FallArmCfgPPO(BaseConfig):
         init_at_random_ep_len = True
         num_steps_per_env = 50  # per iteration
         # logging
-        save_interval = 2000  # check for potential saves every this many iterations
+        save_interval = 1000  # check for potential saves every this many iterations
         experiment_name = 'fall_arm'
         run_name = ''
         # load and resume
@@ -305,4 +309,4 @@ class FallArmCfgPPO(BaseConfig):
         load_run = -1  # -1 = last run
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
-        max_iterations = 50000  # number of policy updates
+        max_iterations = 12000  # number of policy updates

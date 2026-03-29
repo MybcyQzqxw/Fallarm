@@ -10,10 +10,10 @@ class FallArmCfg(BaseConfig):
 
         default_joint_angles = {
             'left_shoulder_root_joint': 0.95,
-            'left_shoulder_pitch_joint': 0.65,
+            'left_shoulder_pitch_joint': 0.646,
             'left_shoulder_roll_joint': 0.0,
             'left_shoulder_yaw_joint': 0.0,
-            'left_elbow_joint': 1.3,
+            'left_elbow_joint': 1.292,
         }
 
         # 坠落高度随机范围 [min, max] (m), 用于 reset 时随机化 slider_joint 位置
@@ -163,67 +163,70 @@ class FallArmCfg(BaseConfig):
         num_reward_groups = len(reward_groups)
         reward_group_weights = [1, 0.1, 1, 1]
 
+        class scales:
+            termination = -1
+            task_arm_pose = 1
+            task_low_max_slider_acc = 1
+
+    class constraints:
+        # task reward
+        arm_pose_sigma = 0.1
         low_max_slider_acc_threshold = 100
         low_max_slider_acc_margin = 200
         low_max_slider_acc_value_at_margin = 0.1
+
+        # style reward
+        no_releave_after_contact_threshold = 5  # [frames] 从接触开始的无接触候选必须持续至少这个帧数才被惩罚
+        encourage_contact_after_land_threshold = 0.53
+        ee_distance_threshold = 0.05
+        ee_distance_margin = 0.5
+        ee_distance_value_at_margin = 0.05
+        low_max_shoulder_pitch_torque_sigma = 150
+        low_max_elbow_torque_sigma = 150
         high_min_shoulder_root_height_lower_threshold = 0.45
         high_min_shoulder_root_height_upper_threshold = 0.50
         high_min_shoulder_root_height_margin = 0.20
         high_min_shoulder_root_height_value_at_margin = 0.1
-
-        class scales:
-            termination = -1
-            task_low_max_slider_acc = 1
-            task_high_min_shoulder_root_height = 1
-
-    class constraints:
-        # style reward
-        no_releave_after_contact_threshold = 5  # [frames] 从接触开始的无接触候选必须持续至少这个帧数才被惩罚
-        low_max_shoulder_pitch_torque_sigma = 150
-        low_max_elbow_torque_sigma = 150
-        arm_pose_sigma = 0.1
-        arm_roll_yaw_deviation_sigma = 0.02
-        ee_distance_threshold = 0.05
-        ee_distance_margin = 0.3
-        ee_distance_value_at_margin = 0.05
-        elbow_dof_pos_threshold = 1.3
-        elbow_dof_pos_margin = 1.15
-        elbow_dof_pos_value_at_margin = 0.1
+        shoulder_pitch_dof_pos_threshold = 0.6
+        elbow_dof_pos_threshold = 1.2
 
         # target reward
         low_slider_acc_at_contact_threshold = 100
         low_slider_acc_at_contact_margin = 200
         low_slider_acc_at_contact_value_at_margin = 0.1
-        high_shoulder_root_height_at_contact_lower_threshold = 0.52
-        high_shoulder_root_height_at_contact_upper_threshold = 0.58
-        high_shoulder_root_height_at_contact_margin = 0.27
-        high_shoulder_root_height_at_contact_value_at_margin = 0.1
-        # high_shoulder_root_height_at_contact_threshold = 0.55
-        # high_shoulder_root_height_at_contact_sigma = 0.05
+        # high_shoulder_root_height_at_contact_lower_threshold = 0.52
+        # high_shoulder_root_height_at_contact_upper_threshold = 0.58
+        # high_shoulder_root_height_at_contact_margin = 0.27
+        # high_shoulder_root_height_at_contact_value_at_margin = 0.1
+        high_shoulder_root_height_at_contact_threshold = 0.53
+        high_shoulder_root_height_at_contact_sigma = 0.1
 
         class scales:
             # regularization reward
-            regu_dof_acc = -2.5e-7
-            regu_dof_vel = -1e-3
-            regu_action_rate = -1e-2
-            regu_smoothness = -1e-2
-            regu_torques = -2.5e-6
-            regu_joint_power = -2.5e-5
+            regu_dof_acc = -2.5e-6
+            regu_dof_vel = -1e-2
+            regu_action_rate = -1e-1
+            regu_smoothness = -1e-1
+            regu_torques = -2.5e-5
+            regu_joint_power = -2.5e-4
             regu_dof_pos_limits = -1e2
             regu_dof_vel_limits = -1e0
 
             # style reward
-            style_penalised_contact = -10
-            style_no_releave_after_contact = -10
+            style_penalised_contact = -50
+            style_no_releave_after_contact = -50
+            style_encourage_contact_after_land = 50
+            style_ee_distance = 50
             style_low_max_shoulder_pitch_torque = 10
             style_low_max_elbow_torque = 10
-            style_arm_pose = 10
-            style_arm_roll_yaw_deviation = 10
-            style_ee_distance = 30
-            style_elbow_dof_pos = 10
+            style_high_min_shoulder_root_height = 10
+            style_shoulder_pitch_dof_pos = -50
+            style_shoulder_roll_dof_pos = -50
+            style_shoulder_yaw_dof_pos = -50
+            style_elbow_dof_pos = -50
 
             # target reward
-            target_low_slider_acc_at_contact = 10
+            target_low_slider_acc_at_contact = 0
             target_high_shoulder_root_height_at_contact = 10
 
     class normalization:
@@ -309,4 +312,4 @@ class FallArmCfgPPO(BaseConfig):
         load_run = -1  # -1 = last run
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
-        max_iterations = 12000  # number of policy updates
+        max_iterations = 50000  # number of policy updates

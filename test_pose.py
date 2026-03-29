@@ -37,7 +37,7 @@ class FallArmPoseViewer:
 
         # 滑块关节单独配置 (单位: 米, 控制初始坠落高度)
         self.slider_joint_pos = {
-            'left_shoulder_root_joint': 0.55,     # 初始高度 [m]
+            'left_shoulder_root_joint': 0.53,     # 初始高度 [m]
         }
 
         # 基座姿态配置 (fall_arm 基座固定在原点)

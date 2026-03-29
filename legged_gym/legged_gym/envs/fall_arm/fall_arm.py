@@ -1151,24 +1151,8 @@ class FallArm(BaseTask):
 
     # target reward
 
-    def _reward_low_slider_acc_at_contact(self):
-        acc_reward = tolerance(
-            self.max_slider_acc_in_one_step,
-            bounds=(0.0, self.cfg.constraints.low_slider_acc_at_contact_threshold),
-            margin=self.cfg.constraints.low_slider_acc_at_contact_margin,
-            value_at_margin=self.cfg.constraints.low_slider_acc_at_contact_value_at_margin,
-        )
-        return self.ee_in_contact.float() * acc_reward
-
-    def _reward_high_shoulder_root_height_at_contact(self):
-        # height_reward = tolerance(
-        #     self.shoulder_root_height,
-        #     bounds=(self.cfg.constraints.high_shoulder_root_height_at_contact_lower_threshold,
-        #             self.cfg.constraints.high_shoulder_root_height_at_contact_upper_threshold),
-        #     margin=self.cfg.constraints.high_shoulder_root_height_at_contact_margin,
-        #     value_at_margin=self.cfg.constraints.high_shoulder_root_height_at_contact_value_at_margin,
-        # )
-        threshold = self.cfg.constraints.high_shoulder_root_height_at_contact_threshold
-        sigma = self.cfg.constraints.high_shoulder_root_height_at_contact_sigma
+    def _reward_shoulder_root_height(self):
+        threshold = self.cfg.constraints.shoulder_root_height_threshold
+        sigma = self.cfg.constraints.shoulder_root_height_sigma
         height_reward = torch.exp(-((self.shoulder_root_height - threshold) / sigma)**2)
         return self.ee_in_contact.float() * height_reward

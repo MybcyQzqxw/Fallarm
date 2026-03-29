@@ -105,7 +105,7 @@ class FallArmCfg(BaseConfig):
         # _create_envs 中初始化下面 5 个
         # 负载质量
         randomize_payload_mass = use_random
-        payload_mass_range = [-2, 2]
+        payload_mass_range = [-2, 5]
         # 质心偏移
         randomize_com_displacement = use_random
         com_displacement_range = [-0.05, 0.05]
@@ -161,7 +161,7 @@ class FallArmCfg(BaseConfig):
     class rewards:
         reward_groups = ['task', 'regu', 'style', 'target']
         num_reward_groups = len(reward_groups)
-        reward_group_weights = [1, 0.1, 1, 1]
+        reward_group_weights = [1, 0.1, 1, 5]
 
         class scales:
             termination = -1
@@ -191,15 +191,8 @@ class FallArmCfg(BaseConfig):
         elbow_dof_pos_threshold = 1.2
 
         # target reward
-        low_slider_acc_at_contact_threshold = 100
-        low_slider_acc_at_contact_margin = 200
-        low_slider_acc_at_contact_value_at_margin = 0.1
-        # high_shoulder_root_height_at_contact_lower_threshold = 0.52
-        # high_shoulder_root_height_at_contact_upper_threshold = 0.58
-        # high_shoulder_root_height_at_contact_margin = 0.27
-        # high_shoulder_root_height_at_contact_value_at_margin = 0.1
-        high_shoulder_root_height_at_contact_threshold = 0.53
-        high_shoulder_root_height_at_contact_sigma = 0.1
+        shoulder_root_height_threshold = 0.53
+        shoulder_root_height_sigma = 0.1
 
         class scales:
             # regularization reward
@@ -215,8 +208,8 @@ class FallArmCfg(BaseConfig):
             # style reward
             style_penalised_contact = -50
             style_no_releave_after_contact = -50
-            style_encourage_contact_after_land = 50
-            style_ee_distance = 50
+            style_encourage_contact_after_land = 20
+            style_ee_distance = 20
             style_low_max_shoulder_pitch_torque = 10
             style_low_max_elbow_torque = 10
             style_high_min_shoulder_root_height = 10
@@ -226,8 +219,7 @@ class FallArmCfg(BaseConfig):
             style_elbow_dof_pos = -50
 
             # target reward
-            target_low_slider_acc_at_contact = 0
-            target_high_shoulder_root_height_at_contact = 10
+            target_shoulder_root_height = 10
 
     class normalization:
         clip_observations = 100.0
@@ -304,7 +296,7 @@ class FallArmCfgPPO(BaseConfig):
         init_at_random_ep_len = True
         num_steps_per_env = 50  # per iteration
         # logging
-        save_interval = 1000  # check for potential saves every this many iterations
+        save_interval = 2000  # check for potential saves every this many iterations
         experiment_name = 'fall_arm'
         run_name = ''
         # load and resume
@@ -312,4 +304,4 @@ class FallArmCfgPPO(BaseConfig):
         load_run = -1  # -1 = last run
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
-        max_iterations = 10000  # number of policy updates
+        max_iterations = 50000  # number of policy updates

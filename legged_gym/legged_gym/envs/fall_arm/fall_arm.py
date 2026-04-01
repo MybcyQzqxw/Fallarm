@@ -164,6 +164,8 @@ class FallArm(BaseTask):
         self.last_last_actions[:] = self.last_actions[:]
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
+        self.prev_shoulder_root_vel[:] = self.rigid_body_states[:, self.shoulder_root_index, 7:10]
+        self.prev_ee_vel[:] = self.rigid_body_states[:, self.end_idx, 7:10]
 
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         self.reset_idx(env_ids)
@@ -585,6 +587,8 @@ class FallArm(BaseTask):
             (self.num_envs,), float('inf'), dtype=torch.float, device=self.device
         )
         self.shoulder_root_height = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        self.prev_shoulder_root_vel = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float)
+        self.prev_ee_vel = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float)
 
         # 动作缩放
         self.action_rescale = torch.full(
@@ -877,6 +881,8 @@ class FallArm(BaseTask):
         self.last_actions[env_ids] = 0.
         self.last_last_actions[env_ids] = 0.
         self.last_dof_vel[env_ids] = 0.
+        self.prev_shoulder_root_vel[env_ids] = 0.
+        self.prev_ee_vel[env_ids] = 0.
         self.obs_buf[env_ids] = 0.
         self.episode_length_buf[env_ids] = 0
         self.real_episode_length_buf[env_ids] = 0
@@ -1151,8 +1157,29 @@ class FallArm(BaseTask):
 
     # target reward
 
+    def _reward_shoulder_root_vel(self):
+        shoulder_root_vel = self.rigid_body_states[:, self.shoulder_root_index, 7:10]  # 线速度 (3,)
+        speed = torch.norm(shoulder_root_vel, dim=-1)  # 标量速度
+        return speed
+
+    def _reward_ee_vel(self):
+        ee_vel = self.rigid_body_states[:, self.end_idx, 7:10]  # 末端线速度 (3,)
+        speed = torch.norm(ee_vel, dim=-1)  # 标量速度
+        return speed
+
+    def _reward_shoulder_root_acc(self):
+        curr_vel = self.rigid_body_states[:, self.shoulder_root_index, 7:10]
+        acc = (curr_vel - self.prev_shoulder_root_vel) / self.dt
+        return torch.norm(acc, dim=-1)
+
+    def _reward_ee_acc(self):
+        curr_vel = self.rigid_body_states[:, self.end_idx, 7:10]
+        acc = (curr_vel - self.prev_ee_vel) / self.dt
+        return torch.norm(acc, dim=-1)
+
     def _reward_shoulder_root_height(self):
         threshold = self.cfg.constraints.shoulder_root_height_threshold
         sigma = self.cfg.constraints.shoulder_root_height_sigma
-        height_reward = torch.exp(-((self.shoulder_root_height - threshold) / sigma)**2)
+        # height_reward = torch.exp(-((self.shoulder_root_height - threshold) / sigma)**2)
+        height_reward = 1 - torch.abs(self.shoulder_root_height - threshold) / threshold
         return self.ee_in_contact.float() * height_reward

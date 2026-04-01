@@ -151,17 +151,17 @@ class FallArmCfg(BaseConfig):
     class curriculum:
         use_curriculum = True
         force_initial = 100.0               # [N] 初始辅助上升力 (接近完全抵消重力)
-        force_decrement = 1.0              # [N] 通过课程后每次减小的力
+        force_decrement = 0.5              # [N] 通过课程后每次减小的力
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
-        action_rescale_decrement = 0.005     # 通过课程后每次减小的动作缩放
+        action_rescale_decrement = 0.0025     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.25           # 最小动作缩放
-        min_shoulder_root_height_lower_threshold = 0.45         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
+        min_shoulder_root_height_lower_threshold = 0.35         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
         min_shoulder_root_height_upper_threshold = 0.50         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
 
     class rewards:
         reward_groups = ['task', 'regu', 'style', 'target']
         num_reward_groups = len(reward_groups)
-        reward_group_weights = [1, 0.1, 1, 5]
+        reward_group_weights = [1, 0.1, 1, 2]
 
         class scales:
             termination = -1
@@ -176,16 +176,16 @@ class FallArmCfg(BaseConfig):
         low_max_slider_acc_value_at_margin = 0.1
 
         # style reward
-        no_releave_after_contact_threshold = 5  # [frames] 从接触开始的无接触候选必须持续至少这个帧数才被惩罚
+        no_releave_after_contact_threshold = 3  # [frames] 从接触开始的无接触候选必须持续至少这个帧数才被惩罚
         encourage_contact_after_land_threshold = 0.53
         ee_distance_threshold = 0.05
         ee_distance_margin = 0.5
-        ee_distance_value_at_margin = 0.05
+        ee_distance_value_at_margin = 0.1
         low_max_shoulder_pitch_torque_sigma = 150
         low_max_elbow_torque_sigma = 150
-        high_min_shoulder_root_height_lower_threshold = 0.45
-        high_min_shoulder_root_height_upper_threshold = 0.50
-        high_min_shoulder_root_height_margin = 0.20
+        high_min_shoulder_root_height_lower_threshold = 0.40
+        high_min_shoulder_root_height_upper_threshold = 0.45
+        high_min_shoulder_root_height_margin = 0.15
         high_min_shoulder_root_height_value_at_margin = 0.1
         shoulder_pitch_dof_pos_threshold = 0.6
         elbow_dof_pos_threshold = 1.2
@@ -196,7 +196,7 @@ class FallArmCfg(BaseConfig):
 
         class scales:
             # regularization reward
-            regu_dof_acc = -2.5e-6
+            regu_dof_acc = -2.5e-5
             regu_dof_vel = -1e-2
             regu_action_rate = -1e-1
             regu_smoothness = -1e-1
@@ -208,17 +208,21 @@ class FallArmCfg(BaseConfig):
             # style reward
             style_penalised_contact = -50
             style_no_releave_after_contact = -50
-            style_encourage_contact_after_land = 20
-            style_ee_distance = 20
+            style_encourage_contact_after_land = 50
+            style_ee_distance = 50
             style_low_max_shoulder_pitch_torque = 10
             style_low_max_elbow_torque = 10
-            style_high_min_shoulder_root_height = 10
+            style_high_min_shoulder_root_height = 30
             style_shoulder_pitch_dof_pos = -50
             style_shoulder_roll_dof_pos = -50
             style_shoulder_yaw_dof_pos = -50
             style_elbow_dof_pos = -50
 
             # target reward
+            target_shoulder_root_vel = -10
+            target_ee_vel = -10
+            target_shoulder_root_acc = -1e-3
+            target_ee_acc = -1e-3
             target_shoulder_root_height = 10
 
     class normalization:
@@ -304,4 +308,4 @@ class FallArmCfgPPO(BaseConfig):
         load_run = -1  # -1 = last run
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
-        max_iterations = 10000  # number of policy updates
+        max_iterations = 50000  # number of policy updates

@@ -1033,17 +1033,32 @@ class FallArm(BaseTask):
         arm_pos = self.dof_pos[:, self.arm_dof_indices]
         arm_default = self.default_dof_pos[:, self.arm_dof_indices]
         deviation = torch.sum(torch.square(arm_pos - arm_default), dim=1)
-        sigma = float(self.cfg.constraints.arm_pose_sigma)
-        arm_pose_reward = torch.exp(-deviation / sigma)
+        # arm_pose_reward = tolerance(
+        #     deviation,
+        #     bounds=(-np.inf, self.cfg.constraints.arm_pose_threshold),
+        #     margin=self.cfg.constraints.arm_pose_margin,
+        #     value_at_margin=self.cfg.constraints.arm_pose_value_at_margin,
+        # )
+        arm_pose_reward = torch.exp(-deviation / self.cfg.constraints.arm_pose_sigma)
         return arm_pose_reward
 
-    def _reward_low_max_slider_acc(self):
-        return tolerance(
-            self.max_slider_acc,
-            bounds=(0.0, self.cfg.constraints.low_max_slider_acc_threshold),
-            margin=self.cfg.constraints.low_max_slider_acc_margin,
-            value_at_margin=self.cfg.constraints.low_max_slider_acc_value_at_margin,
-        )
+    def _reward_all_dof_pos(self):
+        shoulder_pitch_dof_pos = self.dof_pos[:, self.shoulder_pitch_dof_idx]
+        shoulder_pitch_dof_good = shoulder_pitch_dof_pos > self.cfg.constraints.shoulder_pitch_dof_pos_threshold
+
+        shoulder_roll_dof_pos = self.dof_pos[:, self.shoulder_roll_dof_idx]
+        shoulder_roll_dof_default = self.default_dof_pos[:, self.shoulder_roll_dof_idx]
+        shoulder_roll_dof_deviation = torch.abs(shoulder_roll_dof_pos - shoulder_roll_dof_default)
+        shoulder_roll_dof_good = shoulder_roll_dof_deviation < 0.1
+
+        shoulder_yaw_dof_pos = self.dof_pos[:, self.shoulder_yaw_dof_idx]
+        shoulder_yaw_dof_default = self.default_dof_pos[:, self.shoulder_yaw_dof_idx]
+        shoulder_yaw_dof_deviation = torch.abs(shoulder_yaw_dof_pos - shoulder_yaw_dof_default)
+        shoulder_yaw_dof_good = shoulder_yaw_dof_deviation < 0.1
+
+        elbow_dof_pos = self.dof_pos[:, self.elbow_dof_idx]
+        elbow_dof_good = elbow_dof_pos > self.cfg.constraints.elbow_dof_pos_threshold
+        return shoulder_pitch_dof_good.float() * shoulder_roll_dof_good.float() * shoulder_yaw_dof_good.float() * elbow_dof_good.float()
 
     # regularization reward
 
@@ -1100,11 +1115,6 @@ class FallArm(BaseTask):
             self.ee_no_contact_counter[mask] = 0
         return mask.float()
 
-    def _reward_encourage_contact_after_land(self):
-        after_land = self.shoulder_root_height < self.cfg.constraints.encourage_contact_after_land_threshold
-        reward = self.ee_in_contact.float() * after_land.float()
-        return reward
-
     def _reward_ee_distance(self):
         roll_pos = self.shoulder_roll_pos  # (num_envs, 3)
         ee_pos = self.end_effector_pos  # (num_envs, 3)
@@ -1117,6 +1127,14 @@ class FallArm(BaseTask):
             value_at_margin=self.cfg.constraints.ee_distance_value_at_margin,
         )
         return ee_distance_reward
+
+    def _reward_low_max_slider_acc(self):
+        return tolerance(
+            self.max_slider_acc,
+            bounds=(0.0, self.cfg.constraints.low_max_slider_acc_threshold),
+            margin=self.cfg.constraints.low_max_slider_acc_margin,
+            value_at_margin=self.cfg.constraints.low_max_slider_acc_value_at_margin,
+        )
 
     def _reward_low_max_shoulder_pitch_torque(self):
         return torch.exp(-self.max_shoulder_pitch_torque / self.cfg.constraints.low_max_shoulder_pitch_torque_sigma)
@@ -1155,31 +1173,47 @@ class FallArm(BaseTask):
         straight = elbow_dof_pos < self.cfg.constraints.elbow_dof_pos_threshold
         return straight.float()
 
-    # target reward
+    def _reward_encourage_contact(self):
+        after_land = self.shoulder_root_height < self.cfg.constraints.land_height
+        reward = self.ee_in_contact.float() * after_land.float()
+        return reward
+
+    def _reward_penalize_no_contact(self):
+        after_land = self.shoulder_root_height < self.cfg.constraints.land_height
+        reward = (self.ee_in_contact.float() - 1.0) * after_land.float()
+        return reward
 
     def _reward_shoulder_root_vel(self):
+        after_land = self.shoulder_root_height < self.cfg.constraints.land_height
         shoulder_root_vel = self.rigid_body_states[:, self.shoulder_root_index, 7:10]  # 线速度 (3,)
         speed = torch.norm(shoulder_root_vel, dim=-1)  # 标量速度
-        return speed
+        return after_land.float() * speed
 
     def _reward_ee_vel(self):
+        after_land = self.shoulder_root_height < self.cfg.constraints.land_height
         ee_vel = self.rigid_body_states[:, self.end_idx, 7:10]  # 末端线速度 (3,)
         speed = torch.norm(ee_vel, dim=-1)  # 标量速度
-        return speed
+        return after_land.float() * speed
 
     def _reward_shoulder_root_acc(self):
+        after_land = self.shoulder_root_height < self.cfg.constraints.land_height
         curr_vel = self.rigid_body_states[:, self.shoulder_root_index, 7:10]
         acc = (curr_vel - self.prev_shoulder_root_vel) / self.dt
-        return torch.norm(acc, dim=-1)
+        return after_land.float() * torch.norm(acc, dim=-1)
 
     def _reward_ee_acc(self):
+        after_land = self.shoulder_root_height < self.cfg.constraints.land_height
         curr_vel = self.rigid_body_states[:, self.end_idx, 7:10]
         acc = (curr_vel - self.prev_ee_vel) / self.dt
-        return torch.norm(acc, dim=-1)
+        return after_land.float() * torch.norm(acc, dim=-1)
+
+    # target reward
 
     def _reward_shoulder_root_height(self):
+        after_land = self.shoulder_root_height < self.cfg.constraints.land_height
         threshold = self.cfg.constraints.shoulder_root_height_threshold
         sigma = self.cfg.constraints.shoulder_root_height_sigma
         # height_reward = torch.exp(-((self.shoulder_root_height - threshold) / sigma)**2)
         height_reward = 1 - torch.abs(self.shoulder_root_height - threshold) / threshold
-        return self.ee_in_contact.float() * height_reward
+        # return after_land.float() * height_reward
+        return height_reward

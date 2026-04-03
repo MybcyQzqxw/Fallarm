@@ -217,17 +217,17 @@ class FallArmCfg(BaseConfig):
             style_low_max_shoulder_pitch_torque = 10
             style_low_max_elbow_torque = 10
             style_high_min_shoulder_root_height = 10
-            style_shoulder_pitch_dof_pos = -100
-            style_shoulder_roll_dof_pos = -100
-            style_shoulder_yaw_dof_pos = -100
-            style_elbow_dof_pos = -100
+            style_shoulder_pitch_dof_pos = -30
+            style_shoulder_roll_dof_pos = -30
+            style_shoulder_yaw_dof_pos = -30
+            style_elbow_dof_pos = -30
             # ----- after_land
             style_encourage_contact = 10
-            style_penalize_no_contact = 100
+            style_penalize_no_contact = 30
             style_shoulder_root_vel = -10
-            style_ee_vel = -100
-            style_shoulder_root_acc = -1e-2
-            style_ee_acc = -1e-2
+            style_ee_vel = -30
+            style_shoulder_root_acc = -1e-3
+            style_ee_acc = -1e-3
 
             # target reward
             target_shoulder_root_height = 10

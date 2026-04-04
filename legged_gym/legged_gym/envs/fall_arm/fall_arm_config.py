@@ -155,7 +155,7 @@ class FallArmCfg(BaseConfig):
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
         action_rescale_decrement = 0.0025     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.25           # 最小动作缩放
-        min_shoulder_root_height_lower_threshold = 0.40         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
+        min_shoulder_root_height_lower_threshold = 0.35         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
         min_shoulder_root_height_upper_threshold = 0.45         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
 
     class rewards:
@@ -169,7 +169,7 @@ class FallArmCfg(BaseConfig):
             task_all_dof_pos = 1
 
     class constraints:
-        land_height = 0.53
+        land_height = 0.5
 
         # task reward
         # arm_pose_threshold = 0.1
@@ -195,7 +195,7 @@ class FallArmCfg(BaseConfig):
         elbow_dof_pos_threshold = 1.2
 
         # target reward
-        shoulder_root_height_threshold = 0.53
+        shoulder_root_height_threshold = 0.5
         shoulder_root_height_sigma = 0.1
 
         class scales:
@@ -217,15 +217,15 @@ class FallArmCfg(BaseConfig):
             style_low_max_shoulder_pitch_torque = 10
             style_low_max_elbow_torque = 10
             style_high_min_shoulder_root_height = 10
-            style_shoulder_pitch_dof_pos = -30
-            style_shoulder_roll_dof_pos = -30
-            style_shoulder_yaw_dof_pos = -30
-            style_elbow_dof_pos = -30
+            style_shoulder_pitch_dof_pos = -10
+            style_shoulder_roll_dof_pos = -10
+            style_shoulder_yaw_dof_pos = -10
+            style_elbow_dof_pos = -10
             # ----- after_land
-            style_encourage_contact = 10
-            style_penalize_no_contact = 30
+            style_encourage_contact = 20
+            style_penalize_no_contact = 20
             style_shoulder_root_vel = -10
-            style_ee_vel = -30
+            style_ee_vel = -10
             style_shoulder_root_acc = -1e-3
             style_ee_acc = -1e-3
 

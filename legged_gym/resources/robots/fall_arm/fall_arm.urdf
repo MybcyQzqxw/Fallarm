@@ -173,8 +173,8 @@
   </joint>
   <link name="end_effector">
     <inertial>
-      <origin xyz="0.000372 0.000000 -0.017363" rpy="0 0 0" />
-      <mass value="0.025241" />
+      <origin xyz="0.000000 0.000000 -0.017741" rpy="0 0 0" />
+      <mass value="0.026024" />
       <inertia ixx="0.000006" ixy="0.000000" ixz="0.000000" iyy="0.000006" iyz="0.000000" izz="0.000007" />
     </inertial>
     <visual>

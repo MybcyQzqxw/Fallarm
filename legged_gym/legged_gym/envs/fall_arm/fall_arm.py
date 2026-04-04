@@ -1192,8 +1192,9 @@ class FallArm(BaseTask):
     def _reward_ee_vel(self):
         after_land = self.shoulder_root_height < self.cfg.constraints.land_height
         ee_vel = self.rigid_body_states[:, self.end_idx, 7:10]  # 末端线速度 (3,)
-        speed = torch.norm(ee_vel, dim=-1)  # 标量速度
-        return after_land.float() * speed
+        shoulder_root_vel = self.rigid_body_states[:, self.shoulder_root_index, 7:10]  # shoulder_root 线速度 (3,)
+        relative_speed = torch.norm(ee_vel - shoulder_root_vel, dim=-1)  # 相对速度标量
+        return after_land.float() * relative_speed
 
     def _reward_shoulder_root_acc(self):
         after_land = self.shoulder_root_height < self.cfg.constraints.land_height
@@ -1215,5 +1216,5 @@ class FallArm(BaseTask):
         sigma = self.cfg.constraints.shoulder_root_height_sigma
         # height_reward = torch.exp(-((self.shoulder_root_height - threshold) / sigma)**2)
         height_reward = 1 - torch.abs(self.shoulder_root_height - threshold) / threshold
-        # return after_land.float() * height_reward
-        return height_reward
+        return after_land.float() * height_reward
+        # return height_reward

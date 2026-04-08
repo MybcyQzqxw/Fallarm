@@ -105,7 +105,7 @@ class FallArmCfg(BaseConfig):
         # _create_envs 中初始化下面 5 个
         # 负载质量
         randomize_payload_mass = use_random
-        payload_mass_range = [-12, -8]
+        payload_mass_range = [-2, 2]
         # 质心偏移
         randomize_com_displacement = use_random
         com_displacement_range = [-0.05, 0.05]
@@ -155,7 +155,7 @@ class FallArmCfg(BaseConfig):
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
         action_rescale_decrement = 0.0025     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.25           # 最小动作缩放
-        min_shoulder_root_height_lower_threshold = 0.35         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
+        min_shoulder_root_height_lower_threshold = 0.40         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
         min_shoulder_root_height_upper_threshold = 0.45         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
 
     class rewards:
@@ -178,7 +178,7 @@ class FallArmCfg(BaseConfig):
         arm_pose_sigma = 0.5
 
         # style reward
-        no_releave_after_contact_threshold = 2  # [frames] 从接触开始的无接触候选必须持续至少这个帧数才被惩罚
+        no_releave_after_contact_threshold = 3  # [frames] 从接触开始的无接触候选必须持续至少这个帧数才被惩罚
         ee_distance_threshold = 0.10
         ee_distance_margin = 0.60
         ee_distance_value_at_margin = 0.05
@@ -217,17 +217,17 @@ class FallArmCfg(BaseConfig):
             style_low_max_slider_acc = 10
             style_low_max_shoulder_pitch_torque = 10
             style_low_max_elbow_torque = 10
-            style_high_shoulder_root_height = 50
+            style_high_shoulder_root_height = 30
             style_min_shoulder_root_height_range = 10
             style_shoulder_pitch_dof_pos = -50
             style_shoulder_roll_dof_pos = -50
             style_shoulder_yaw_dof_pos = -50
             style_elbow_dof_pos = -50
             # ----- after_land
-            style_encourage_contact = 20
-            style_penalize_no_contact = 20
+            style_encourage_contact = 10
+            style_penalize_no_contact = 10
             style_shoulder_root_vel = -10
-            style_ee_vel = -10
+            style_ee_vel = -30
             style_shoulder_root_acc = -1e-3
             style_ee_acc = -1e-3
 
@@ -317,4 +317,4 @@ class FallArmCfgPPO(BaseConfig):
         load_run = -1  # -1 = last run
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
-        max_iterations = 5000  # number of policy updates
+        max_iterations = 50000  # number of policy updates

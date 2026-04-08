@@ -33,17 +33,17 @@ OUTPUT_URDF = "legged_gym/resources/robots/fall_arm/fall_arm.urdf"
 
 DEFAULT_JOINT_LIMITS = {
     # fall_arm 手臂关节
-    'left_shoulder_pitch': (-90, 90, 120, 20),
-    'left_shoulder_roll': (-10, 90, 120, 20),
-    'left_shoulder_yaw': (-90, 45, 120, 20),
-    'left_elbow': (10, 115, 120, 20),
+    'left_shoulder_pitch': (-90, 90, 144, 20),
+    'left_shoulder_roll': (-10, 90, 144, 20),
+    'left_shoulder_yaw': (-90, 45, 144, 20),
+    'left_elbow': (10, 115, 144, 20),
 }
 
 # ==================== 移动关节 (prismatic) 限制配置 ====================
 # 格式: 'joint_keyword': (lower_m, upper_m, effort_N, velocity_m/s)
 # 注意: 单位直接为米/牛顿/米每秒, 不做角度转换
 PRISMATIC_JOINT_LIMITS = {
-    'left_shoulder_root': (0, 1, 120, 20),
+    'left_shoulder_root': (0, 1, 144, 20),
 }
 
 # ==================== 关节 Origin 配置 ====================

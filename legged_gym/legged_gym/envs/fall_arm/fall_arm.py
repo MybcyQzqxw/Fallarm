@@ -1142,13 +1142,17 @@ class FallArm(BaseTask):
     def _reward_low_max_elbow_torque(self):
         return torch.exp(-self.max_elbow_torque / self.cfg.constraints.low_max_elbow_torque_sigma)
 
-    def _reward_high_min_shoulder_root_height(self):
+    def _reward_high_shoulder_root_height(self):
+        height_reward = (self.shoulder_root_height - self.cfg.constraints.high_shoulder_root_height_threshold).clamp(max=0.0)
+        return height_reward
+
+    def _reward_min_shoulder_root_height_range(self):
         return tolerance(
             self.min_shoulder_root_height,
-            bounds=(self.cfg.constraints.high_min_shoulder_root_height_lower_threshold,
-                    self.cfg.constraints.high_min_shoulder_root_height_upper_threshold),
-            margin=self.cfg.constraints.high_min_shoulder_root_height_margin,
-            value_at_margin=self.cfg.constraints.high_min_shoulder_root_height_value_at_margin,
+            bounds=(self.cfg.constraints.min_shoulder_root_height_range_lower_threshold,
+                    self.cfg.constraints.min_shoulder_root_height_range_upper_threshold),
+            margin=self.cfg.constraints.min_shoulder_root_height_range_margin,
+            value_at_margin=self.cfg.constraints.min_shoulder_root_height_range_value_at_margin,
         )
 
     def _reward_shoulder_pitch_dof_pos(self):

@@ -105,7 +105,7 @@ class FallArmCfg(BaseConfig):
         # _create_envs 中初始化下面 5 个
         # 负载质量
         randomize_payload_mass = use_random
-        payload_mass_range = [-4, 0]
+        payload_mass_range = [-2, 2]
         # 质心偏移
         randomize_com_displacement = use_random
         com_displacement_range = [-0.05, 0.05]
@@ -151,11 +151,11 @@ class FallArmCfg(BaseConfig):
     class curriculum:
         use_curriculum = True
         force_initial = 100.0               # [N] 初始辅助上升力 (接近完全抵消重力)
-        force_decrement = 0.5              # [N] 通过课程后每次减小的力
+        force_decrement = 2.0              # [N] 通过课程后每次减小的力
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
-        action_rescale_decrement = 0.0025     # 通过课程后每次减小的动作缩放
+        action_rescale_decrement = 0.01     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.25           # 最小动作缩放
-        min_shoulder_root_height_lower_threshold = 0.40         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
+        min_shoulder_root_height_lower_threshold = 0.35         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
         min_shoulder_root_height_upper_threshold = 0.45         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
 
     class rewards:
@@ -317,4 +317,4 @@ class FallArmCfgPPO(BaseConfig):
         load_run = -1  # -1 = last run
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
-        max_iterations = 50000  # number of policy updates
+        max_iterations = 10000  # number of policy updates

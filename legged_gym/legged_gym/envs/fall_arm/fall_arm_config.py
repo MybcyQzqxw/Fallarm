@@ -144,7 +144,7 @@ class FallArmCfg(BaseConfig):
     class limitation:
         dof_vel_limit = 300.0           # [rad/s] 关节角速度上限
         slider_vel_limit = 20.0         # [m/s] 导轨速度上限
-        slider_pos_min = 0.25           # [m] 导轨位置下限
+        slider_pos_min = 0.20           # [m] 导轨位置下限
         soft_dof_pos_limit = 0.9  # 软关节位置限制（安全范围比例）
         soft_dof_vel_limit = 0.9  # 软关节速度限制（安全范围比例）
 
@@ -156,12 +156,12 @@ class FallArmCfg(BaseConfig):
         action_rescale_decrement = 0.01     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.25           # 最小动作缩放
         min_shoulder_root_height_lower_threshold = 0.35         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
-        min_shoulder_root_height_upper_threshold = 0.45         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
+        min_shoulder_root_height_upper_threshold = 0.40         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
 
     class rewards:
-        reward_groups = ['task', 'regu', 'style', 'target']
+        reward_groups = ['task', 'regularization', 'behavior', 'effort', 'stabilization']
         num_reward_groups = len(reward_groups)
-        reward_group_weights = [1, 0.1, 1, 2]
+        reward_group_weights = [1, 0.1, 1, 0.25, 4]
 
         class scales:
             termination = -1
@@ -177,62 +177,61 @@ class FallArmCfg(BaseConfig):
         # arm_pose_value_at_margin = 0.1
         arm_pose_sigma = 0.5
 
-        # style reward
+        # behavior reward
         no_releave_after_contact_threshold = 3  # [frames] 从接触开始的无接触候选必须持续至少这个帧数才被惩罚
-        ee_distance_threshold = 0.10
-        ee_distance_margin = 0.60
-        ee_distance_value_at_margin = 0.05
-        low_max_slider_acc_threshold = 100
-        low_max_slider_acc_margin = 200
-        low_max_slider_acc_value_at_margin = 0.1
-        low_max_shoulder_pitch_torque_sigma = 150
-        low_max_elbow_torque_sigma = 150
-        high_shoulder_root_height_threshold = 0.40
-        min_shoulder_root_height_range_lower_threshold = 0.40
-        min_shoulder_root_height_range_upper_threshold = 0.45
-        min_shoulder_root_height_range_margin = 0.15
-        min_shoulder_root_height_range_value_at_margin = 0.05
         shoulder_pitch_dof_pos_threshold = 0.6
         elbow_dof_pos_threshold = 1.2
+        ee_distance_threshold = 0.05
+        ee_distance_margin = 0.60
+        ee_distance_value_at_margin = 0.05
+        high_shoulder_root_height_threshold = 0.35
+        min_shoulder_root_height_range_lower_threshold = 0.35
+        min_shoulder_root_height_range_upper_threshold = 0.40
+        min_shoulder_root_height_range_margin = 0.15
+        min_shoulder_root_height_range_value_at_margin = 0.05
 
-        # target reward
-        shoulder_root_height_threshold = 0.53
-        shoulder_root_height_sigma = 0.1
+        # effort reward
+        low_max_shoulder_pitch_torque_sigma = 150
+        low_max_elbow_torque_sigma = 150
+        low_max_shoulder_root_acc_threshold = 100
+        low_max_shoulder_root_acc_margin = 200
+        low_max_shoulder_root_acc_value_at_margin = 0.1
+
+        # stabilization reward
+        target_shoulder_root_height_threshold = 0.53
+        target_shoulder_root_height_sigma = 0.1
 
         class scales:
             # regularization reward
-            regu_dof_acc = -2.5e-6
-            regu_dof_vel = -1e-2
-            regu_action_rate = -1e-1
-            regu_smoothness = -1e-1
-            regu_torques = -2.5e-5
-            regu_joint_power = -2.5e-4
-            regu_dof_pos_limits = -1e2
-            regu_dof_vel_limits = -1e0
+            regularization_dof_acc = -2.5e-6
+            regularization_dof_vel = -1e-3
+            regularization_action_rate = -1e-2
+            regularization_action_jerk = -1e-2
+            regularization_torques = -2.5e-6
+            regularization_joint_power = -2.5e-5
+            regularization_dof_pos_limits = -1e2
+            regularization_dof_vel_limits = -1e0
 
-            # style reward
-            style_penalised_contact = -50
-            style_no_releave_after_contact = -50
-            style_ee_distance = 10
-            style_low_max_slider_acc = 10
-            style_low_max_shoulder_pitch_torque = 10
-            style_low_max_elbow_torque = 10
-            style_high_shoulder_root_height = 30
-            style_min_shoulder_root_height_range = 10
-            style_shoulder_pitch_dof_pos = -50
-            style_shoulder_roll_dof_pos = -50
-            style_shoulder_yaw_dof_pos = -50
-            style_elbow_dof_pos = -50
-            # ----- after_land
-            style_encourage_contact = 10
-            style_penalize_no_contact = 10
-            style_shoulder_root_vel = -10
-            style_ee_vel = -30
-            style_shoulder_root_acc = -1e-3
-            style_ee_acc = -1e-3
+            # behavior reward
+            behavior_penalised_contact = -50
+            behavior_encourage_contact = 10
+            behavior_no_releave_after_contact = -50
+            behavior_shoulder_pitch_dof_pos = -50
+            behavior_shoulder_roll_dof_pos = -50
+            behavior_shoulder_yaw_dof_pos = -50
+            behavior_elbow_dof_pos = -50
+            behavior_ee_distance = 10
+            behavior_high_shoulder_root_height = 30
+            behavior_min_shoulder_root_height_range = 10
 
-            # target reward
-            target_shoulder_root_height = 10
+            # effort reward
+            effort_low_max_shoulder_pitch_torque = 10
+            effort_low_max_elbow_torque = 10
+            effort_low_max_shoulder_root_acc = 10
+
+            # stabilization reward
+            stabilization_ee_vel = -30
+            stabilization_target_shoulder_root_height = 10
 
     class normalization:
         clip_observations = 100.0

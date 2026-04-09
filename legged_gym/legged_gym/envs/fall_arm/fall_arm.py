@@ -73,7 +73,7 @@ class FallArm(BaseTask):
 
         # 每步开始前清零子步累积量
         self.ee_in_contact[:] = False
-        self.max_slider_acc_in_one_step[:] = 0.
+        self.max_shoulder_root_acc_in_one_step[:] = 0.
         prev_slider_vel = self.dof_vel[:, self.slider_dof_idx].clone()
 
         for _ in range(self.cfg.control.decimation):
@@ -99,8 +99,8 @@ class FallArm(BaseTask):
             # 滑块加速度: 子步间速度差 / 子步时间步长
             current_slider_vel = self.dof_vel[:, self.slider_dof_idx]
             substep_slider_acc = torch.abs(current_slider_vel - prev_slider_vel) / self.sim_params.dt
-            self.max_slider_acc = torch.maximum(self.max_slider_acc, substep_slider_acc)
-            self.max_slider_acc_in_one_step = torch.maximum(self.max_slider_acc_in_one_step, substep_slider_acc)
+            self.max_shoulder_root_acc = torch.maximum(self.max_shoulder_root_acc, substep_slider_acc)
+            self.max_shoulder_root_acc_in_one_step = torch.maximum(self.max_shoulder_root_acc_in_one_step, substep_slider_acc)
             prev_slider_vel = current_slider_vel.clone()
             self.max_shoulder_pitch_torque = torch.maximum(self.max_shoulder_pitch_torque, torch.abs(self.torques[:, self.shoulder_pitch_dof_idx]))
             # use DOF-index for accessing torques (self.torques is DOF-indexed)
@@ -579,8 +579,8 @@ class FallArm(BaseTask):
         self.prev_ee_in_contact = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool, requires_grad=False)
         self.ee_no_contact_counter = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device, requires_grad=False)
         self.ee_left_candidate = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device, requires_grad=False)
-        self.max_slider_acc = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
-        self.max_slider_acc_in_one_step = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        self.max_shoulder_root_acc = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        self.max_shoulder_root_acc_in_one_step = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.max_shoulder_pitch_torque = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.max_elbow_torque = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.min_shoulder_root_height = torch.full(
@@ -906,11 +906,11 @@ class FallArm(BaseTask):
 
         # 回合级统计量日志
         if len(env_ids) > 0:
-            self.extras['episode']['max_slider_acc'] = torch.mean(self.max_slider_acc[env_ids])
+            self.extras['episode']['max_shoulder_root_acc'] = torch.mean(self.max_shoulder_root_acc[env_ids])
             self.extras['episode']['max_shoulder_pitch_torque'] = torch.mean(self.max_shoulder_pitch_torque[env_ids])
             self.extras['episode']['max_elbow_torque'] = torch.mean(self.max_elbow_torque[env_ids])
             self.extras['episode']['min_shoulder_root_height'] = torch.mean(self.min_shoulder_root_height[env_ids])
-        self.max_slider_acc[env_ids] = 0.
+        self.max_shoulder_root_acc[env_ids] = 0.
         self.max_shoulder_pitch_torque[env_ids] = 0.
         self.max_elbow_torque[env_ids] = 0.
         self.min_shoulder_root_height[env_ids] = float('inf')
@@ -1073,7 +1073,7 @@ class FallArm(BaseTask):
     def _reward_action_rate(self):
         return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
 
-    def _reward_smoothness(self):
+    def _reward_action_jerk(self):
         return torch.sum(torch.square(self.actions - self.last_actions - self.last_actions + self.last_last_actions), dim=1)
 
     def _reward_torques(self):
@@ -1097,7 +1097,7 @@ class FallArm(BaseTask):
             dim=1,
         )
 
-    # style reward
+    # behavior reward
 
     def _reward_penalised_contact(self):
         return torch.any(
@@ -1105,55 +1105,20 @@ class FallArm(BaseTask):
             dim=1,
         ).float()
 
+    def _reward_encourage_contact(self):
+        after_land = self.shoulder_root_height < self.cfg.constraints.land_height
+        reward = (2 * self.ee_in_contact.float() - 1.0) * after_land.float()
+        return reward
+
     def _reward_no_releave_after_contact(self):
         # 只有在“从接触开始的无接触候选”且无接触已持续至少阈值帧时才惩罚
         threshold = int(self.cfg.constraints.no_releave_after_contact_threshold)
-        mask = self.ee_left_candidate & (self.ee_no_contact_counter >= threshold)
+        ee_left = self.ee_left_candidate & (self.ee_no_contact_counter >= threshold)
         # 一旦判定为离地事件，将候选标记清除并重置计数器，避免重复惩罚同一次事件
-        if mask.any():
-            self.ee_left_candidate[mask] = False
-            self.ee_no_contact_counter[mask] = 0
-        return mask.float()
-
-    def _reward_ee_distance(self):
-        roll_pos = self.shoulder_roll_pos  # (num_envs, 3)
-        ee_pos = self.end_effector_pos  # (num_envs, 3)
-        diff_xy = ee_pos[:, :2] - roll_pos[:, :2]
-        distance = torch.norm(diff_xy, dim=1)
-        ee_distance_reward = tolerance(
-            distance,
-            bounds=(0.0, self.cfg.constraints.ee_distance_threshold),
-            margin=self.cfg.constraints.ee_distance_margin,
-            value_at_margin=self.cfg.constraints.ee_distance_value_at_margin,
-        )
-        return ee_distance_reward
-
-    def _reward_low_max_slider_acc(self):
-        return tolerance(
-            self.max_slider_acc,
-            bounds=(0.0, self.cfg.constraints.low_max_slider_acc_threshold),
-            margin=self.cfg.constraints.low_max_slider_acc_margin,
-            value_at_margin=self.cfg.constraints.low_max_slider_acc_value_at_margin,
-        )
-
-    def _reward_low_max_shoulder_pitch_torque(self):
-        return torch.exp(-self.max_shoulder_pitch_torque / self.cfg.constraints.low_max_shoulder_pitch_torque_sigma)
-
-    def _reward_low_max_elbow_torque(self):
-        return torch.exp(-self.max_elbow_torque / self.cfg.constraints.low_max_elbow_torque_sigma)
-
-    def _reward_high_shoulder_root_height(self):
-        height_reward = (self.shoulder_root_height - self.cfg.constraints.high_shoulder_root_height_threshold).clamp(max=0.0)
-        return height_reward
-
-    def _reward_min_shoulder_root_height_range(self):
-        return tolerance(
-            self.min_shoulder_root_height,
-            bounds=(self.cfg.constraints.min_shoulder_root_height_range_lower_threshold,
-                    self.cfg.constraints.min_shoulder_root_height_range_upper_threshold),
-            margin=self.cfg.constraints.min_shoulder_root_height_range_margin,
-            value_at_margin=self.cfg.constraints.min_shoulder_root_height_range_value_at_margin,
-        )
+        if ee_left.any():
+            self.ee_left_candidate[ee_left] = False
+            self.ee_no_contact_counter[ee_left] = 0
+        return ee_left.float()
 
     def _reward_shoulder_pitch_dof_pos(self):
         shoulder_pitch_dof_pos = self.dof_pos[:, self.shoulder_pitch_dof_idx]
@@ -1177,48 +1142,63 @@ class FallArm(BaseTask):
         straight = elbow_dof_pos < self.cfg.constraints.elbow_dof_pos_threshold
         return straight.float()
 
-    def _reward_encourage_contact(self):
-        after_land = self.shoulder_root_height < self.cfg.constraints.land_height
-        reward = self.ee_in_contact.float() * after_land.float()
-        return reward
+    def _reward_ee_distance(self):
+        roll_pos = self.shoulder_roll_pos  # (num_envs, 3)
+        ee_pos = self.end_effector_pos  # (num_envs, 3)
+        diff_xy = ee_pos[:, :2] - roll_pos[:, :2]
+        distance = torch.norm(diff_xy, dim=1)
+        ee_distance_reward = tolerance(
+            distance,
+            bounds=(0.0, self.cfg.constraints.ee_distance_threshold),
+            margin=self.cfg.constraints.ee_distance_margin,
+            value_at_margin=self.cfg.constraints.ee_distance_value_at_margin,
+        )
+        return ee_distance_reward
 
-    def _reward_penalize_no_contact(self):
-        after_land = self.shoulder_root_height < self.cfg.constraints.land_height
-        reward = (self.ee_in_contact.float() - 1.0) * after_land.float()
-        return reward
+    def _reward_high_shoulder_root_height(self):
+        height_reward = (self.shoulder_root_height - self.cfg.constraints.high_shoulder_root_height_threshold).clamp(max=0.0)
+        return height_reward
 
-    def _reward_shoulder_root_vel(self):
-        after_land = self.shoulder_root_height < self.cfg.constraints.land_height
-        shoulder_root_vel = self.rigid_body_states[:, self.shoulder_root_index, 7:10]  # 线速度 (3,)
-        speed = torch.norm(shoulder_root_vel, dim=-1)  # 标量速度
-        return after_land.float() * speed
+    def _reward_min_shoulder_root_height_range(self):
+        return tolerance(
+            self.min_shoulder_root_height,
+            bounds=(self.cfg.constraints.min_shoulder_root_height_range_lower_threshold,
+                    self.cfg.constraints.min_shoulder_root_height_range_upper_threshold),
+            margin=self.cfg.constraints.min_shoulder_root_height_range_margin,
+            value_at_margin=self.cfg.constraints.min_shoulder_root_height_range_value_at_margin,
+        )
+
+    # effort reward
+
+    def _reward_low_max_shoulder_pitch_torque(self):
+        return torch.exp(-self.max_shoulder_pitch_torque / self.cfg.constraints.low_max_shoulder_pitch_torque_sigma)
+
+    def _reward_low_max_elbow_torque(self):
+        return torch.exp(-self.max_elbow_torque / self.cfg.constraints.low_max_elbow_torque_sigma)
+
+    def _reward_low_max_shoulder_root_acc(self):
+        return tolerance(
+            self.max_shoulder_root_acc,
+            bounds=(0.0, self.cfg.constraints.low_max_shoulder_root_acc_threshold),
+            margin=self.cfg.constraints.low_max_shoulder_root_acc_margin,
+            value_at_margin=self.cfg.constraints.low_max_shoulder_root_acc_value_at_margin,
+        )
+
+    # stabilization reward
 
     def _reward_ee_vel(self):
         after_land = self.shoulder_root_height < self.cfg.constraints.land_height
         ee_vel = self.rigid_body_states[:, self.end_idx, 7:10]  # 末端线速度 (3,)
-        shoulder_root_vel = self.rigid_body_states[:, self.shoulder_root_index, 7:10]  # shoulder_root 线速度 (3,)
-        relative_speed = torch.norm(ee_vel - shoulder_root_vel, dim=-1)  # 相对速度标量
-        return after_land.float() * relative_speed
+        # shoulder_root_vel = self.rigid_body_states[:, self.shoulder_root_index, 7:10]  # shoulder_root 线速度 (3,)
+        # relative_speed = torch.norm(ee_vel - shoulder_root_vel, dim=-1)  # 相对速度标量
+        # return after_land.float() * relative_speed
+        speed = torch.norm(ee_vel, dim=-1)  # 绝对速度标量
+        return after_land.float() * speed
 
-    def _reward_shoulder_root_acc(self):
+    def _reward_target_shoulder_root_height(self):
         after_land = self.shoulder_root_height < self.cfg.constraints.land_height
-        curr_vel = self.rigid_body_states[:, self.shoulder_root_index, 7:10]
-        acc = (curr_vel - self.prev_shoulder_root_vel) / self.dt
-        return after_land.float() * torch.norm(acc, dim=-1)
-
-    def _reward_ee_acc(self):
-        after_land = self.shoulder_root_height < self.cfg.constraints.land_height
-        curr_vel = self.rigid_body_states[:, self.end_idx, 7:10]
-        acc = (curr_vel - self.prev_ee_vel) / self.dt
-        return after_land.float() * torch.norm(acc, dim=-1)
-
-    # target reward
-
-    def _reward_shoulder_root_height(self):
-        after_land = self.shoulder_root_height < self.cfg.constraints.land_height
-        threshold = self.cfg.constraints.shoulder_root_height_threshold
-        sigma = self.cfg.constraints.shoulder_root_height_sigma
+        threshold = self.cfg.constraints.target_shoulder_root_height_threshold
+        sigma = self.cfg.constraints.target_shoulder_root_height_sigma
         # height_reward = torch.exp(-((self.shoulder_root_height - threshold) / sigma)**2)
         height_reward = 1 - torch.abs(self.shoulder_root_height - threshold) / threshold
         return after_land.float() * height_reward
-        # return height_reward

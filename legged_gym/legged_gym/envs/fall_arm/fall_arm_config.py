@@ -161,7 +161,7 @@ class FallArmCfg(BaseConfig):
     class rewards:
         reward_groups = ['task', 'regularization', 'behavior', 'effort', 'stabilization']
         num_reward_groups = len(reward_groups)
-        reward_group_weights = [1, 0.1, 1, 0.25, 4]
+        reward_group_weights = [1, 0.1, 1, 0.25, 2]
 
         class scales:
             termination = -1
@@ -230,7 +230,7 @@ class FallArmCfg(BaseConfig):
             effort_low_max_shoulder_root_acc = 10
 
             # stabilization reward
-            stabilization_ee_vel = -30
+            stabilization_ee_vel = -10
             stabilization_target_shoulder_root_height = 10
 
     class normalization:

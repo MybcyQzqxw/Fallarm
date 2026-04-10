@@ -151,12 +151,18 @@ class FallArmCfg(BaseConfig):
     class curriculum:
         use_curriculum = True
         force_initial = 100.0               # [N] 初始辅助上升力 (接近完全抵消重力)
-        force_decrement = 2.0              # [N] 通过课程后每次减小的力
+        force_decrement = 4.0              # [N] 通过课程后每次减小的力
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
-        action_rescale_decrement = 0.01     # 通过课程后每次减小的动作缩放
+        action_rescale_decrement = 0.03     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.25           # 最小动作缩放
+        check_min_shoulder_root_height = True                   # 是否开启对回合内最低高度的判断
+        # check_min_shoulder_root_height = False                   # 是否开启对回合内最低高度的判断
         min_shoulder_root_height_lower_threshold = 0.35         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
         min_shoulder_root_height_upper_threshold = 0.40         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
+        check_final_shoulder_root_height = True                  # 是否开启对回合结束时高度的判断
+        # check_final_shoulder_root_height = False                  # 是否开启对回合结束时高度的判断
+        final_shoulder_root_height_lower_threshold = 0.50        # [m] 回合结束时 shoulder_root 高度须高于此值才通过
+        final_shoulder_root_height_upper_threshold = 0.55        # [m] 回合结束时 shoulder_root 高度须低于此值才通过
 
     class rewards:
         reward_groups = ['task', 'regularization', 'behavior', 'effort', 'stabilization']
@@ -184,7 +190,7 @@ class FallArmCfg(BaseConfig):
         ee_distance_threshold = 0.05
         ee_distance_margin = 0.60
         ee_distance_value_at_margin = 0.05
-        high_shoulder_root_height_threshold = 0.35
+        high_shoulder_root_height_threshold = 0.40
         min_shoulder_root_height_range_lower_threshold = 0.35
         min_shoulder_root_height_range_upper_threshold = 0.40
         min_shoulder_root_height_range_margin = 0.15
@@ -222,7 +228,7 @@ class FallArmCfg(BaseConfig):
             behavior_elbow_dof_pos = -50
             behavior_ee_distance = 10
             behavior_high_shoulder_root_height = 30
-            behavior_min_shoulder_root_height_range = 10
+            behavior_min_shoulder_root_height_range = 0
 
             # effort reward
             effort_low_max_shoulder_pitch_torque = 10
@@ -316,4 +322,4 @@ class FallArmCfgPPO(BaseConfig):
         load_run = -1  # -1 = last run
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
-        max_iterations = 10000  # number of policy updates
+        max_iterations = 5000  # number of policy updates

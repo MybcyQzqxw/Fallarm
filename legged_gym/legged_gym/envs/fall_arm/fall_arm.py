@@ -910,6 +910,7 @@ class FallArm(BaseTask):
             self.extras['episode']['max_shoulder_pitch_torque'] = torch.mean(self.max_shoulder_pitch_torque[env_ids])
             self.extras['episode']['max_elbow_torque'] = torch.mean(self.max_elbow_torque[env_ids])
             self.extras['episode']['min_shoulder_root_height'] = torch.mean(self.min_shoulder_root_height[env_ids])
+            self.extras['episode']['final_shoulder_root_height'] = torch.mean(self.shoulder_root_height[env_ids])
         self.max_shoulder_root_acc[env_ids] = 0.
         self.max_shoulder_pitch_torque[env_ids] = 0.
         self.max_elbow_torque[env_ids] = 0.

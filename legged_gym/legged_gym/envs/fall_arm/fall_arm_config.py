@@ -105,7 +105,7 @@ class FallArmCfg(BaseConfig):
         # _create_envs 中初始化下面 5 个
         # 负载质量
         randomize_payload_mass = use_random
-        payload_mass_range = [-2, 2]
+        payload_mass_range = [-7, -3]
         # 质心偏移
         randomize_com_displacement = use_random
         com_displacement_range = [-0.05, 0.05]
@@ -144,20 +144,20 @@ class FallArmCfg(BaseConfig):
     class limitation:
         dof_vel_limit = 300.0           # [rad/s] 关节角速度上限
         slider_vel_limit = 20.0         # [m/s] 导轨速度上限
-        slider_pos_min = 0.20           # [m] 导轨位置下限
+        slider_pos_min = 0.10           # [m] 导轨位置下限
         soft_dof_pos_limit = 0.9  # 软关节位置限制（安全范围比例）
         soft_dof_vel_limit = 0.9  # 软关节速度限制（安全范围比例）
 
     class curriculum:
         use_curriculum = True
         force_initial = 100.0               # [N] 初始辅助上升力 (接近完全抵消重力)
-        force_decrement = 4.0              # [N] 通过课程后每次减小的力
+        force_decrement = 2.0              # [N] 通过课程后每次减小的力
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
-        action_rescale_decrement = 0.03     # 通过课程后每次减小的动作缩放
+        action_rescale_decrement = 0.015     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.25           # 最小动作缩放
         check_min_shoulder_root_height = True                   # 是否开启对回合内最低高度的判断
         # check_min_shoulder_root_height = False                   # 是否开启对回合内最低高度的判断
-        min_shoulder_root_height_lower_threshold = 0.35         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
+        min_shoulder_root_height_lower_threshold = 0.25         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
         min_shoulder_root_height_upper_threshold = 0.40         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
         check_final_shoulder_root_height = True                  # 是否开启对回合结束时高度的判断
         # check_final_shoulder_root_height = False                  # 是否开启对回合结束时高度的判断
@@ -167,7 +167,7 @@ class FallArmCfg(BaseConfig):
     class rewards:
         reward_groups = ['task', 'regularization', 'behavior', 'effort', 'stabilization']
         num_reward_groups = len(reward_groups)
-        reward_group_weights = [1, 0.1, 1, 0.25, 2]
+        reward_group_weights = [1, 0.1, 1, 0.25, 2.5]
 
         class scales:
             termination = -1
@@ -187,14 +187,10 @@ class FallArmCfg(BaseConfig):
         no_releave_after_contact_threshold = 3  # [frames] 从接触开始的无接触候选必须持续至少这个帧数才被惩罚
         shoulder_pitch_dof_pos_threshold = 0.6
         elbow_dof_pos_threshold = 1.2
-        ee_distance_threshold = 0.05
-        ee_distance_margin = 0.60
-        ee_distance_value_at_margin = 0.05
+        ee_distance_threshold = 0.1
+        ee_distance_margin = 0.5
+        ee_distance_value_at_margin = 0.1
         high_shoulder_root_height_threshold = 0.40
-        min_shoulder_root_height_range_lower_threshold = 0.35
-        min_shoulder_root_height_range_upper_threshold = 0.40
-        min_shoulder_root_height_range_margin = 0.15
-        min_shoulder_root_height_range_value_at_margin = 0.05
 
         # effort reward
         low_max_shoulder_pitch_torque_sigma = 150
@@ -220,15 +216,14 @@ class FallArmCfg(BaseConfig):
 
             # behavior reward
             behavior_penalised_contact = -50
-            behavior_encourage_contact = 10
-            behavior_no_releave_after_contact = -50
+            behavior_encourage_contact = 30
+            behavior_no_releave_after_contact = -10
             behavior_shoulder_pitch_dof_pos = -50
             behavior_shoulder_roll_dof_pos = -50
             behavior_shoulder_yaw_dof_pos = -50
             behavior_elbow_dof_pos = -50
             behavior_ee_distance = 10
             behavior_high_shoulder_root_height = 30
-            behavior_min_shoulder_root_height_range = 0
 
             # effort reward
             effort_low_max_shoulder_pitch_torque = 10
@@ -236,7 +231,7 @@ class FallArmCfg(BaseConfig):
             effort_low_max_shoulder_root_acc = 10
 
             # stabilization reward
-            stabilization_ee_vel = -10
+            stabilization_ee_vel = -30
             stabilization_target_shoulder_root_height = 10
 
     class normalization:
@@ -322,4 +317,4 @@ class FallArmCfgPPO(BaseConfig):
         load_run = -1  # -1 = last run
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
-        max_iterations = 5000  # number of policy updates
+        max_iterations = 50000  # number of policy updates

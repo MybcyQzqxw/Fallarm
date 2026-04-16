@@ -96,6 +96,9 @@ Key CLI arguments:
 ### Play a Trained Policy
 ```bash
 python legged_gym/scripts/play.py --task fall_arm --checkpoint_path /path/to/checkpoint.pt
+
+python legged_gym/scripts/test.py --task fall_arm --checkpoint_path /path/to/checkpoint.pt
+
 ```
 
 ---

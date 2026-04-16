@@ -1035,6 +1035,15 @@ class FallArm(BaseTask):
 
     # task reward
 
+    def _reward_shoulder_root_height(self):
+        height_reward = tolerance(
+            self.shoulder_root_height,
+            bounds=(self.cfg.constraints.shoulder_root_height_threshold, np.inf),
+            margin=self.cfg.constraints.shoulder_root_height_margin,
+            value_at_margin=self.cfg.constraints.shoulder_root_height_value_at_margin,
+        )
+        return height_reward
+
     def _reward_arm_pose(self):
         arm_pos = self.dof_pos[:, self.arm_dof_indices]
         arm_default = self.default_dof_pos[:, self.arm_dof_indices]
@@ -1161,6 +1170,15 @@ class FallArm(BaseTask):
         )
         return ee_distance_reward
 
+    def _reward_ee_vel(self):
+        before_land = self.shoulder_root_height > self.cfg.constraints.land_height
+        ee_vel = self.rigid_body_states[:, self.end_idx, 7:10]  # 末端线速度 (3,)
+        shoulder_root_vel = self.rigid_body_states[:, self.shoulder_root_index, 7:10]  # shoulder_root 线速度 (3,)
+        relative_speed = torch.norm(ee_vel - shoulder_root_vel, dim=-1)  # 相对速度标量
+        return before_land.float() * relative_speed
+        # speed = torch.norm(ee_vel, dim=-1)  # 绝对速度标量
+        # return after_land.float() * speed
+
     def _reward_high_shoulder_root_height(self):
         height_reward = (self.shoulder_root_height - self.cfg.constraints.high_shoulder_root_height_threshold).clamp(max=0.0)
         return height_reward
@@ -1192,7 +1210,7 @@ class FallArm(BaseTask):
 
     # stabilization reward
 
-    def _reward_ee_vel(self):
+    def _reward_target_ee_vel(self):
         after_land = self.shoulder_root_height < self.cfg.constraints.land_height
         ee_vel = self.rigid_body_states[:, self.end_idx, 7:10]  # 末端线速度 (3,)
         # shoulder_root_vel = self.rigid_body_states[:, self.shoulder_root_index, 7:10]  # shoulder_root 线速度 (3,)

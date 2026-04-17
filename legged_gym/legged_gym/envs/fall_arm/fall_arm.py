@@ -149,6 +149,7 @@ class FallArm(BaseTask):
         if contact_mask.any():
             self.ee_no_contact_counter[contact_mask] = 0
             self.ee_left_candidate[contact_mask] = False
+            self.ee_ever_contacted[contact_mask] = True
         # 若本步无接触：计数自增
         if no_contact_mask.any():
             self.ee_no_contact_counter[no_contact_mask] += 1
@@ -579,6 +580,7 @@ class FallArm(BaseTask):
         self.prev_ee_in_contact = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool, requires_grad=False)
         self.ee_no_contact_counter = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device, requires_grad=False)
         self.ee_left_candidate = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device, requires_grad=False)
+        self.ee_ever_contacted = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device, requires_grad=False)
         self.max_shoulder_root_acc = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.max_shoulder_root_acc_in_one_step = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.max_shoulder_pitch_torque = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
@@ -893,6 +895,7 @@ class FallArm(BaseTask):
         self.prev_ee_in_contact[env_ids] = False
         self.ee_no_contact_counter[env_ids] = 0
         self.ee_left_candidate[env_ids] = False
+        self.ee_ever_contacted[env_ids] = False
 
         # 回合奖励统计
         for key in self.episode_sums.keys():
@@ -1126,14 +1129,11 @@ class FallArm(BaseTask):
         return reward
 
     def _reward_no_releave_after_contact(self):
-        # 只有在“从接触开始的无接触候选”且无接触已持续至少阈值帧时才惩罚
         threshold = int(self.cfg.constraints.no_releave_after_contact_threshold)
-        ee_left = self.ee_left_candidate & (self.ee_no_contact_counter >= threshold)
-        # 一旦判定为离地事件，将候选标记清除并重置计数器，避免重复惩罚同一次事件
-        if ee_left.any():
-            self.ee_left_candidate[ee_left] = False
-            self.ee_no_contact_counter[ee_left] = 0
-        return ee_left.float()
+        # 接触后离地且超过阈值的环境，按离地时长累积惩罚（离地越久惩罚越大）
+        penalize = self.ee_left_candidate & (self.ee_no_contact_counter >= threshold)
+        penalty = (self.ee_no_contact_counter - threshold).clamp(min=0).float() * penalize.float()
+        return penalty
 
     def _reward_shoulder_pitch_dof_pos(self):
         shoulder_pitch_dof_pos = self.dof_pos[:, self.shoulder_pitch_dof_idx]
@@ -1180,17 +1180,14 @@ class FallArm(BaseTask):
         # return after_land.float() * speed
 
     def _reward_high_shoulder_root_height(self):
-        height_reward = (self.shoulder_root_height - self.cfg.constraints.high_shoulder_root_height_threshold).clamp(max=0.0)
+        threshold = self.cfg.constraints.high_shoulder_root_height_threshold
+        height_reward = (self.shoulder_root_height - threshold).clamp(max=0.0)
         return height_reward
 
-    def _reward_min_shoulder_root_height_range(self):
-        return tolerance(
-            self.min_shoulder_root_height,
-            bounds=(self.cfg.constraints.min_shoulder_root_height_range_lower_threshold,
-                    self.cfg.constraints.min_shoulder_root_height_range_upper_threshold),
-            margin=self.cfg.constraints.min_shoulder_root_height_range_margin,
-            value_at_margin=self.cfg.constraints.min_shoulder_root_height_range_value_at_margin,
-        )
+    def _reward_low_shoulder_root_height(self):
+        threshold = self.cfg.constraints.low_shoulder_root_height_threshold
+        excess = (self.shoulder_root_height - threshold).clamp(min=0.0)
+        return self.ee_ever_contacted.float() * excess
 
     # effort reward
 

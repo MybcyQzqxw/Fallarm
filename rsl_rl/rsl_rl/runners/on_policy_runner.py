@@ -1,5 +1,6 @@
 import time
 import os
+import csv
 from collections import deque
 import statistics
 
@@ -219,25 +220,32 @@ class OnPolicyRunner:
         self.scalar_history[tag]['values'].append(val)
 
     def _save_scalar_plots(self):
-        """Save each tracked scalar as a PNG in <log_dir>/exported/images."""
-        out_dir = os.path.join(self.log_dir, 'exported', 'images')
-        os.makedirs(out_dir, exist_ok=True)
+        """Save each tracked scalar as a PNG in <log_dir>/exported/images and as CSV in <log_dir>/exported/csv."""
+        img_dir = os.path.join(self.log_dir, 'exported', 'images')
+        csv_dir = os.path.join(self.log_dir, 'exported', 'csv')
+        os.makedirs(img_dir, exist_ok=True)
+        os.makedirs(csv_dir, exist_ok=True)
         for tag, data in self.scalar_history.items():
             its = data['its']
             vals = data['values']
             if len(its) == 0:
                 continue
+            # sanitize filename
+            fname = tag.replace('/', '_').replace(' ', '_')
+            # save PNG
             plt.figure()
             plt.plot(its, vals)
             plt.xlabel('iteration')
             plt.ylabel(tag)
             plt.title(tag)
             plt.grid(True)
-            # sanitize filename
-            fname = tag.replace('/', '_').replace(' ', '_') + '.png'
-            path = os.path.join(out_dir, fname)
-            plt.savefig(path)
+            plt.savefig(os.path.join(img_dir, fname + '.png'))
             plt.close()
+            # save CSV
+            with open(os.path.join(csv_dir, fname + '.csv'), 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['iteration', tag])
+                writer.writerows(zip(its, vals))
 
     def save(self, path, infos=None):
         torch.save({'model_state_dict': self.alg.actor_critic.state_dict(),

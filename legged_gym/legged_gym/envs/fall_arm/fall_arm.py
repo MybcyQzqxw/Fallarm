@@ -1033,10 +1033,10 @@ class FallArm(BaseTask):
             new_force = (
                 self.force[passed_ids] - self.cfg.curriculum.force_decrement
             ).clamp(min=self.cfg.curriculum.force_min)
-            # 距终点偏差不超过总范围的 10% 时, 直接对齐终点 (避免长期在终点附近徘徊)
+            # 距终点偏差不超过总范围的 5% 时, 直接对齐终点 (避免长期在终点附近徘徊)
             force_range = self.cfg.curriculum.force_initial - self.cfg.curriculum.force_min
             if force_range > 0:
-                snap_mask = (new_force - self.cfg.curriculum.force_min) <= 0.1 * force_range
+                snap_mask = (new_force - self.cfg.curriculum.force_min) <= 0.05 * force_range
                 new_force[snap_mask] = self.cfg.curriculum.force_min
             self.force[passed_ids] = new_force
 
@@ -1044,10 +1044,10 @@ class FallArm(BaseTask):
             new_rescale = (
                 self.action_rescale[passed_ids] - self.cfg.curriculum.action_rescale_decrement
             ).clamp(min=self.cfg.curriculum.action_rescale_min)
-            # 距终点偏差不超过总范围的 10% 时, 直接对齐终点
+            # 距终点偏差不超过总范围的 5% 时, 直接对齐终点
             rescale_range = self.cfg.control.action_scale - self.cfg.curriculum.action_rescale_min
             if rescale_range > 0:
-                snap_mask = (new_rescale - self.cfg.curriculum.action_rescale_min) <= 0.1 * rescale_range
+                snap_mask = (new_rescale - self.cfg.curriculum.action_rescale_min) <= 0.05 * rescale_range
                 new_rescale[snap_mask] = self.cfg.curriculum.action_rescale_min
             self.action_rescale[passed_ids] = new_rescale
 

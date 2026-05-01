@@ -151,9 +151,9 @@ class FallArmCfg(BaseConfig):
     class curriculum:
         use_curriculum = True
         force_initial = 50.0               # [N] 初始辅助上升力 (接近完全抵消重力)
-        force_decrement = 2.0              # [N] 通过课程后每次减小的力
+        force_decrement = 1.0              # [N] 通过课程后每次减小的力
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
-        action_rescale_decrement = 0.02     # 通过课程后每次减小的动作缩放
+        action_rescale_decrement = 0.01     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.50           # 最小动作缩放
         check_min_shoulder_root_height = True                   # 是否开启对回合内最低高度的判断
         # check_min_shoulder_root_height = False                   # 是否开启对回合内最低高度的判断
@@ -177,9 +177,6 @@ class FallArmCfg(BaseConfig):
     class constraints:
         land_height = 0.55
         # task reward
-        # arm_pose_threshold = 0.1
-        # arm_pose_margin = 2.0
-        # arm_pose_value_at_margin = 0.1
         arm_pose_sigma = 0.5
 
         # behavior reward
@@ -191,10 +188,6 @@ class FallArmCfg(BaseConfig):
         ee_distance_value_at_margin = 0.05
         high_shoulder_root_height_threshold = 0.30
         low_shoulder_root_height_threshold = 0.55
-        min_shoulder_root_height_lower_threshold = 0.30         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
-        min_shoulder_root_height_upper_threshold = 0.40         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
-        min_shoulder_root_height_margin = 0.15
-        min_shoulder_root_height_value_at_margin = 0.05
 
         # effort reward
         low_max_shoulder_pitch_torque_sigma = 150
@@ -230,7 +223,6 @@ class FallArmCfg(BaseConfig):
             behavior_ee_vel = -10
             behavior_high_shoulder_root_height = 50
             behavior_low_shoulder_root_height = -50
-            behavior_min_shoulder_root_height = 0
 
             # effort reward
             effort_low_max_shoulder_pitch_torque = 10
@@ -324,4 +316,4 @@ class FallArmCfgPPO(BaseConfig):
         load_run = -1  # -1 = last run
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
-        max_iterations = 8000  # number of policy updates
+        max_iterations = 5000  # number of policy updates

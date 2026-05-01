@@ -1030,13 +1030,26 @@ class FallArm(BaseTask):
 
         if len(passed_ids) > 0:
             # 减小辅助力, 但不低于 force_min (通常为 0)
-            self.force[passed_ids] = (
+            new_force = (
                 self.force[passed_ids] - self.cfg.curriculum.force_decrement
             ).clamp(min=self.cfg.curriculum.force_min)
+            # 距终点偏差不超过总范围的 10% 时, 直接对齐终点 (避免长期在终点附近徘徊)
+            force_range = self.cfg.curriculum.force_initial - self.cfg.curriculum.force_min
+            if force_range > 0:
+                snap_mask = (new_force - self.cfg.curriculum.force_min) <= 0.1 * force_range
+                new_force[snap_mask] = self.cfg.curriculum.force_min
+            self.force[passed_ids] = new_force
+
             # 减小动作缩放, 但不低于 action_rescale_min
-            self.action_rescale[passed_ids] = (
+            new_rescale = (
                 self.action_rescale[passed_ids] - self.cfg.curriculum.action_rescale_decrement
             ).clamp(min=self.cfg.curriculum.action_rescale_min)
+            # 距终点偏差不超过总范围的 10% 时, 直接对齐终点
+            rescale_range = self.cfg.control.action_scale - self.cfg.curriculum.action_rescale_min
+            if rescale_range > 0:
+                snap_mask = (new_rescale - self.cfg.curriculum.action_rescale_min) <= 0.1 * rescale_range
+                new_rescale[snap_mask] = self.cfg.curriculum.action_rescale_min
+            self.action_rescale[passed_ids] = new_rescale
 
     # =====================================================================
     #                         相机与可视化
@@ -1056,25 +1069,10 @@ class FallArm(BaseTask):
 
     # task reward
 
-    def _reward_shoulder_root_height(self):
-        height_reward = tolerance(
-            self.shoulder_root_height,
-            bounds=(self.cfg.constraints.shoulder_root_height_threshold, np.inf),
-            margin=self.cfg.constraints.shoulder_root_height_margin,
-            value_at_margin=self.cfg.constraints.shoulder_root_height_value_at_margin,
-        )
-        return height_reward
-
     def _reward_arm_pose(self):
         arm_pos = self.dof_pos[:, self.arm_dof_indices]
         arm_default = self.default_dof_pos[:, self.arm_dof_indices]
         deviation = torch.sum(torch.square(arm_pos - arm_default), dim=1)
-        # arm_pose_reward = tolerance(
-        #     deviation,
-        #     bounds=(-np.inf, self.cfg.constraints.arm_pose_threshold),
-        #     margin=self.cfg.constraints.arm_pose_margin,
-        #     value_at_margin=self.cfg.constraints.arm_pose_value_at_margin,
-        # )
         arm_pose_reward = torch.exp(-deviation / self.cfg.constraints.arm_pose_sigma)
         return arm_pose_reward
 
@@ -1206,19 +1204,6 @@ class FallArm(BaseTask):
         threshold = self.cfg.constraints.low_shoulder_root_height_threshold
         excess = (self.shoulder_root_height - threshold).clamp(min=0.0)
         return self.ee_ever_contacted.float() * excess
-
-    def _reward_min_shoulder_root_height(self):
-        lower = self.cfg.constraints.min_shoulder_root_height_lower_threshold
-        upper = self.cfg.constraints.min_shoulder_root_height_upper_threshold
-        unlocked = self.min_shoulder_root_height_reward_unlocked
-        reward = tolerance(
-            self.shoulder_root_height,
-            bounds=(lower, upper),
-            margin=self.cfg.constraints.min_shoulder_root_height_margin,
-            value_at_margin=self.cfg.constraints.min_shoulder_root_height_value_at_margin,
-        )
-        reward = (unlocked.float() * reward)
-        return reward
 
     # effort reward
 

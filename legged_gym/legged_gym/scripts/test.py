@@ -7,7 +7,7 @@
 
 指标说明:
     (1) 任务成功率 E_succ:       h_min ∈ [H_min_lower, H_min_upper] 且 h_final ∈ [H_final_lower, H_final_upper]
-    (2) 运动平滑性 E_smooth:     Σ_t Σ_j (θ_j(t) - 2θ_j(t-1) + θ_j(t-2))² / T  [rad²]  (HoST convention)
+    (2) 运动平滑性 E_smooth:     Σ_t Σ_j |Δ²θ_j/Δt²| / T  [rad/s²]  (mean absolute angular acceleration)
     (3) 能量消耗   E_energy:     Σ_t Σ_j |ω_j(t)| · |τ_j(t)| · Δt  [J]  (HoST convention)
     (4) 最大加速度 a_max:        成功回合中 max_t |a_root(t)| 的均值
     (5) 肩俯仰转矩裕度 m_pitch:  E[1 - max_t |τ_pitch(t)| / τ_pitch^upper]  (成功回合)
@@ -120,12 +120,12 @@ def test(args):
         newly_done = active & dones.bool()           # 本步刚结束的环境
         still_active = active & (~dones.bool())      # 本步仍未结束的环境
 
-        # --- (2) 运动平滑性: Σ_j (θ_j(t) - 2θ_j(t-1) + θ_j(t-2))²  [rad²] ---
-        #     离散二阶差分 (角加速度度量), 参照 HoST eval_ground.py
+        # --- (2) 运动平滑性: Σ_j |Δ²θ_j / Δt²|  [rad/s²] ---
+        #     Δ²θ/Δt² 为角加速度的标准离散近似, 取绝对值后单位为 rad/s²
         #     对 done 环境 dof_pos 已是新回合初值, delta 异常, 仅累积 still_active
         curr_arm_pos = env.dof_pos[:, env.arm_dof_indices].clone()
-        second_diff = curr_arm_pos - 2 * last_arm_pos + last_last_arm_pos
-        smoothness_vec[still_active] += torch.sum(torch.square(second_diff[still_active]), dim=1)
+        second_diff = (curr_arm_pos - 2 * last_arm_pos + last_last_arm_pos) / (env.dt ** 2)
+        smoothness_vec[still_active] += torch.sum(torch.abs(second_diff[still_active]), dim=1)
         step_count_vec[still_active] += 1
         last_last_arm_pos = last_arm_pos.clone()
         last_arm_pos = curr_arm_pos
@@ -199,7 +199,7 @@ def test(args):
     num_success = int(success_vec.sum().item())
 
     # (2) 运动平滑性: 除以步数得到每步平均, 参照 HoST (所有环境均值)
-    #     单位: rad²
+    #     单位: rad/s²
     smoothness_vec /= step_count_vec.clamp(min=1)
     E_smooth = smoothness_vec.mean().item()
 
@@ -234,7 +234,7 @@ def test(args):
     results_str = (
         f"==================== 测试结果 ({N} 环境, {step_count} 步) ====================\n"
         f"(1) 任务成功率         E_succ    = {E_succ:.4f}  ({num_success}/{N})\n"
-        f"(2) 运动平滑性         E_smooth  = {E_smooth:.6f}  [rad²]\n"
+        f"(2) 运动平滑性         E_smooth  = {E_smooth:.6f}  [rad/s²]\n"
         f"(3) 能量消耗           E_energy  = {E_energy:.4f}  [J]\n"
         f"(4) 最大加速度 (成功)  a_max     = {a_max:.4f}\n"
         f"(5) 肩俯仰转矩裕度    m_pitch   = {m_pitch:.4f}\n"

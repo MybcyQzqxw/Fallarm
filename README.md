@@ -75,6 +75,7 @@ Fast and simple implementation of RL algorithms designed to run fully on GPU. Th
 ### Train
 ```bash
 python legged_gym/scripts/train.py --task fall_arm --run_name test_fall_arm
+python legged_gym/scripts/train.py --task fall_arm --run_name test_fall_arm --headless
 ```
 - Run on CPU: add `--sim_device=cpu --rl_device=cpu`
 - Run headless: add `--headless`

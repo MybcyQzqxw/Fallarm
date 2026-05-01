@@ -31,6 +31,11 @@ from legged_gym.utils.math import (
 
 class FallArm(BaseTask):
 
+    # ========== 新增：肩根最小高度奖励相关状态初始化 ==========
+    def _init_min_shoulder_root_height_reward(self):
+        self.min_shoulder_root_height_reward_unlocked = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self._prev_shoulder_root_height = torch.zeros(self.num_envs, device=self.device)
+
     def __init__(self, cfg: FallArmCfg, sim_params, physics_engine, sim_device, headless):
         self.cfg = cfg
         self.sim_params = sim_params
@@ -54,6 +59,7 @@ class FallArm(BaseTask):
         if not self.headless:
             self.set_camera(self.cfg.viewer.pos, self.cfg.viewer.lookat)
         self._init_buffers()
+        self._init_min_shoulder_root_height_reward()
         self._prepare_reward_function()
         self.init_done = True  # 初始化flag
 
@@ -167,6 +173,14 @@ class FallArm(BaseTask):
         self.last_dof_vel[:] = self.dof_vel[:]
         self.prev_shoulder_root_vel[:] = self.rigid_body_states[:, self.shoulder_root_index, 7:10]
         self.prev_ee_vel[:] = self.rigid_body_states[:, self.end_idx, 7:10]
+
+        # ========== 新增：肩根高度第一次升高事件检测 ==========
+        locked_mask = ~self.min_shoulder_root_height_reward_unlocked
+        curr_height = self.shoulder_root_height
+        prev_height = self._prev_shoulder_root_height
+        unlocked_now = (curr_height > prev_height) & locked_mask
+        self.min_shoulder_root_height_reward_unlocked[unlocked_now] = True
+        self._prev_shoulder_root_height = curr_height.clone()
 
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         self.reset_idx(env_ids)
@@ -897,6 +911,10 @@ class FallArm(BaseTask):
         self.ee_left_candidate[env_ids] = False
         self.ee_ever_contacted[env_ids] = False
 
+        # ========== 新增：肩根最小高度奖励相关状态重置 ==========
+        self.min_shoulder_root_height_reward_unlocked[env_ids] = False
+        self._prev_shoulder_root_height[env_ids] = self.shoulder_root_height[env_ids]
+
         # 回合奖励统计
         for key in self.episode_sums.keys():
             self.extras['episode']['rew_' + key] = (
@@ -1188,6 +1206,19 @@ class FallArm(BaseTask):
         threshold = self.cfg.constraints.low_shoulder_root_height_threshold
         excess = (self.shoulder_root_height - threshold).clamp(min=0.0)
         return self.ee_ever_contacted.float() * excess
+
+    def _reward_min_shoulder_root_height(self):
+        lower = self.cfg.constraints.min_shoulder_root_height_lower_threshold
+        upper = self.cfg.constraints.min_shoulder_root_height_upper_threshold
+        unlocked = self.min_shoulder_root_height_reward_unlocked
+        reward = tolerance(
+            self.shoulder_root_height,
+            bounds=(lower, upper),
+            margin=self.cfg.constraints.min_shoulder_root_height_margin,
+            value_at_margin=self.cfg.constraints.min_shoulder_root_height_value_at_margin,
+        )
+        reward = (unlocked.float() * reward)
+        return reward
 
     # effort reward
 

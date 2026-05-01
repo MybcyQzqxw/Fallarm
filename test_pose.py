@@ -29,15 +29,15 @@ class FallArmPoseViewer:
         # 滑块关节 (prismatic) 单位为米, 手臂关节 (revolute) 单位为度
         # 注意：肘关节 (elbow) 有限位约束，最小约10度
         self.target_joint_angles_deg = {
-            'left_shoulder_pitch_joint': 31.513,    # 肩部俯仰 [deg]
+            'left_shoulder_pitch_joint': 35,    # 肩部俯仰 [deg]
             'left_shoulder_roll_joint': 0,     # 肩部横滚 [deg]
             'left_shoulder_yaw_joint': 0,      # 肩部偏航 [deg]
-            'left_elbow_joint': 70.703,            # 肘关节 [deg]
+            'left_elbow_joint': 55,            # 肘关节 [deg]
         }
 
         # 滑块关节单独配置 (单位: 米, 控制初始坠落高度)
         self.slider_joint_pos = {
-            'left_shoulder_root_joint': 0.8,     # 初始高度 [m]
+            'left_shoulder_root_joint': 0.59,     # 初始高度 [m]
         }
 
         # 基座姿态配置 (fall_arm 基座固定在原点)

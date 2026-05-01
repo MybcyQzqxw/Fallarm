@@ -169,7 +169,7 @@
     <parent link="left_shoulder_yaw_link" />
     <child link="left_elbow_link" />
     <axis xyz="0 -1 0" />
-    <limit lower="0.17453292519943295" upper="2.007128639793479" effort="144" velocity="20"/>
+    <limit lower="0.17453292519943295" upper="2.007128639793479" effort="173" velocity="20"/>
   </joint>
   <link name="end_effector">
     <inertial>

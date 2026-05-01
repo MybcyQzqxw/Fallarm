@@ -36,7 +36,7 @@ DEFAULT_JOINT_LIMITS = {
     'left_shoulder_pitch': (0, 90, 144, 20),
     'left_shoulder_roll': (-10, 10, 144, 20),
     'left_shoulder_yaw': (-10, 10, 144, 20),
-    'left_elbow': (10, 115, 144, 20),
+    'left_elbow': (10, 115, 173, 20),
 }
 
 # ==================== 移动关节 (prismatic) 限制配置 ====================

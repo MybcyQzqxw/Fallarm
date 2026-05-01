@@ -10,10 +10,10 @@ class FallArmCfg(BaseConfig):
 
         default_joint_angles = {
             'left_shoulder_root_joint': 0.95,
-            'left_shoulder_pitch_joint': 0.55,  # 39 度
+            'left_shoulder_pitch_joint': 0.611,  # 35 deg
             'left_shoulder_roll_joint': 0.0,
             'left_shoulder_yaw_joint': 0.0,
-            'left_elbow_joint': 1.234,  # 65 度
+            'left_elbow_joint': 0.960,  # 55 deg
         }
 
         # 坠落高度随机范围 [min, max] (m), 用于 reset 时随机化 slider_joint 位置
@@ -38,16 +38,16 @@ class FallArmCfg(BaseConfig):
     class control:
         control_type = 'P'  # 位置控制, PD控制器将目标角度转换为力矩
         stiffness = {
-            'shoulder_pitch': 80.0,
-            'shoulder_roll': 80.0,
-            'shoulder_yaw': 80.0,
-            'elbow': 80.0,
+            'shoulder_pitch': 100.0,
+            'shoulder_roll': 100.0,
+            'shoulder_yaw': 100.0,
+            'elbow': 100.0,
         }
         damping = {
-            'shoulder_pitch': 0.8,
-            'shoulder_roll': 0.8,
-            'shoulder_yaw': 0.8,
-            'elbow': 0.8,
+            'shoulder_pitch': 1.0,
+            'shoulder_roll': 1.0,
+            'shoulder_yaw': 1.0,
+            'elbow': 1.0,
         }
         action_scale = 1.0  # target = action * scale + default
         decimation = 4       # 策略频率 = 200Hz / 4 = 50Hz
@@ -105,7 +105,7 @@ class FallArmCfg(BaseConfig):
         # _create_envs 中初始化下面 5 个
         # 负载质量
         randomize_payload_mass = use_random
-        payload_mass_range = [-12, -8]
+        payload_mass_range = [-9.5, -5.5]
         # 质心偏移
         randomize_com_displacement = use_random
         com_displacement_range = [-0.05, 0.05]
@@ -150,24 +150,24 @@ class FallArmCfg(BaseConfig):
 
     class curriculum:
         use_curriculum = True
-        force_initial = 50.0               # [N] 初始辅助上升力 (接近完全抵消重力)
+        force_initial = 100.0               # [N] 初始辅助上升力 (接近完全抵消重力)
         force_decrement = 2.0              # [N] 通过课程后每次减小的力
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
-        action_rescale_decrement = 0.02     # 通过课程后每次减小的动作缩放
-        action_rescale_min = 0.50           # 最小动作缩放
+        action_rescale_decrement = 0.01     # 通过课程后每次减小的动作缩放
+        action_rescale_min = 0.5           # 最小动作缩放
         check_min_shoulder_root_height = True                   # 是否开启对回合内最低高度的判断
         # check_min_shoulder_root_height = False                   # 是否开启对回合内最低高度的判断
         min_shoulder_root_height_lower_threshold = 0.30         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
         min_shoulder_root_height_upper_threshold = 0.40         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
         check_final_shoulder_root_height = True                  # 是否开启对回合结束时高度的判断
         # check_final_shoulder_root_height = False                  # 是否开启对回合结束时高度的判断
-        final_shoulder_root_height_lower_threshold = 0.52        # [m] 回合结束时 shoulder_root 高度须高于此值才通过
-        final_shoulder_root_height_upper_threshold = 0.58        # [m] 回合结束时 shoulder_root 高度须低于此值才通过
+        final_shoulder_root_height_lower_threshold = 0.57        # [m] 回合结束时 shoulder_root 高度须高于此值才通过
+        final_shoulder_root_height_upper_threshold = 0.61        # [m] 回合结束时 shoulder_root 高度须低于此值才通过
 
     class rewards:
         reward_groups = ['task', 'regularization', 'behavior', 'effort', 'stabilization']
         num_reward_groups = len(reward_groups)
-        reward_group_weights = [1.5, 0.2, 0.5, 0.02, 1.0]
+        reward_group_weights = [1, 0.1, 0.5, 0.02, 1]
 
         class scales:
             termination = -1
@@ -175,26 +175,26 @@ class FallArmCfg(BaseConfig):
             task_all_dof_pos = 1
 
     class constraints:
-        land_height = 0.55
+        land_height = 0.59
         # task reward
         # arm_pose_threshold = 0.1
         # arm_pose_margin = 2.0
         # arm_pose_value_at_margin = 0.1
-        arm_pose_sigma = 0.5
+        arm_pose_sigma = 2.0
 
         # behavior reward
         no_releave_after_contact_threshold = 3  # [frames] 从接触开始的无接触候选必须持续至少这个帧数才被惩罚
-        shoulder_pitch_dof_pos_threshold = 0.45
-        elbow_dof_pos_threshold = 1.15
-        ee_distance_threshold = 0.05
+        shoulder_pitch_dof_pos_threshold = 0.55
+        elbow_dof_pos_threshold = 0.90
+        ee_distance_threshold = 0.10
         ee_distance_margin = 0.50
         ee_distance_value_at_margin = 0.05
-        high_shoulder_root_height_threshold = 0.30
-        low_shoulder_root_height_threshold = 0.55
-        min_shoulder_root_height_lower_threshold = 0.30         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
-        min_shoulder_root_height_upper_threshold = 0.40         # [m] 回合内 shoulder_root 最低高度须低于此值才通过
-        min_shoulder_root_height_margin = 0.15
-        min_shoulder_root_height_value_at_margin = 0.05
+        high_shoulder_root_height_threshold = 0.35
+        low_shoulder_root_height_threshold = 0.59
+        # min_shoulder_root_height_range_lower_threshold = 0.30
+        # min_shoulder_root_height_range_upper_threshold = 0.40
+        # min_shoulder_root_height_range_margin = 0.05
+        # min_shoulder_root_height_range_value_at_margin = 0.1
 
         # effort reward
         low_max_shoulder_pitch_torque_sigma = 150
@@ -204,7 +204,7 @@ class FallArmCfg(BaseConfig):
         low_max_shoulder_root_acc_value_at_margin = 0.05
 
         # stabilization reward
-        target_shoulder_root_height_threshold = 0.55
+        target_shoulder_root_height_threshold = 0.59
         target_shoulder_root_height_sigma = 0.1
 
         class scales:
@@ -221,7 +221,7 @@ class FallArmCfg(BaseConfig):
             # behavior reward
             behavior_penalised_contact = -50
             behavior_encourage_contact = 10
-            behavior_no_releave_after_contact = -10
+            behavior_no_releave_after_contact = -50
             behavior_shoulder_pitch_dof_pos = -50
             behavior_shoulder_roll_dof_pos = -50
             behavior_shoulder_yaw_dof_pos = -50
@@ -230,8 +230,6 @@ class FallArmCfg(BaseConfig):
             behavior_ee_vel = -10
             behavior_high_shoulder_root_height = 50
             behavior_low_shoulder_root_height = -50
-            behavior_min_shoulder_root_height = 0
-
             # effort reward
             effort_low_max_shoulder_pitch_torque = 10
             effort_low_max_elbow_torque = 10

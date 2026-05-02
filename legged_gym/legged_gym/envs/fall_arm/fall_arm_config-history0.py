@@ -27,7 +27,7 @@ class FallArmCfg(BaseConfig):
         # 观测维度: arm_dof_pos(4) + arm_dof_vel(4) + arm_torques(4)
         #          + action_rescale(1) = 13
         num_one_step_observations = 13
-        num_actor_history = 11  # 历史观测步数
+        num_actor_history = 1  # 历史观测步数
         num_observations = num_actor_history * num_one_step_observations
         episode_length_s = 5.0
 

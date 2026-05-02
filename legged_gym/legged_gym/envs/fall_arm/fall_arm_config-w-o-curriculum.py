@@ -27,7 +27,7 @@ class FallArmCfg(BaseConfig):
         # 观测维度: arm_dof_pos(4) + arm_dof_vel(4) + arm_torques(4)
         #          + action_rescale(1) = 13
         num_one_step_observations = 13
-        num_actor_history = 11  # 历史观测步数
+        num_actor_history = 6  # 历史观测步数
         num_observations = num_actor_history * num_one_step_observations
         episode_length_s = 5.0
 
@@ -150,8 +150,8 @@ class FallArmCfg(BaseConfig):
 
     class curriculum:
         use_curriculum = True
-        force_initial = 50.0               # [N] 初始辅助上升力 (接近完全抵消重力)
-        force_decrement = 1.0              # [N] 通过课程后每次减小的力
+        force_initial = 0.0               # [N] 初始辅助上升力 (接近完全抵消重力)
+        force_decrement = 0.0              # [N] 通过课程后每次减小的力
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
         action_rescale_decrement = 0.01     # 通过课程后每次减小的动作缩放
         action_rescale_min = 0.50           # 最小动作缩放
@@ -316,4 +316,4 @@ class FallArmCfgPPO(BaseConfig):
         load_run = -1  # -1 = last run
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
-        max_iterations = 5000  # number of policy updates
+        max_iterations = 10000  # number of policy updates

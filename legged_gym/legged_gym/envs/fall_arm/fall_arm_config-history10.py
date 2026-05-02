@@ -10,24 +10,24 @@ class FallArmCfg(BaseConfig):
 
         default_joint_angles = {
             'left_shoulder_root_joint': 0.95,
-            'left_shoulder_pitch_joint': 0.55,  # 31.6 deg
+            'left_shoulder_pitch_joint': 0.55,  # 39 度
             'left_shoulder_roll_joint': 0.0,
             'left_shoulder_yaw_joint': 0.0,
-            'left_elbow_joint': -0.08,  # -4.6 deg
+            'left_elbow_joint': 1.234,  # 65 度
         }
 
         # 坠落高度随机范围 [min, max] (m), 用于 reset 时随机化 slider_joint 位置
-        drop_height_range = [0.95, 1.0]
+        drop_height_range = [0.9, 1.0]
 
     class env:
-        num_envs = 1024
+        num_envs = 4096
         num_dofs = 5
         num_real_dofs = 4
         num_actions = 4
         # 观测维度: arm_dof_pos(4) + arm_dof_vel(4) + arm_torques(4)
         #          + action_rescale(1) = 13
         num_one_step_observations = 13
-        num_actor_history = 6  # 历史观测步数
+        num_actor_history = 11  # 历史观测步数
         num_observations = num_actor_history * num_one_step_observations
         episode_length_s = 5.0
 
@@ -38,16 +38,16 @@ class FallArmCfg(BaseConfig):
     class control:
         control_type = 'P'  # 位置控制, PD控制器将目标角度转换为力矩
         stiffness = {
-            'shoulder_pitch': 200.0,
-            'shoulder_roll': 200.0,
-            'shoulder_yaw': 200.0,
-            'elbow': 200.0,
+            'shoulder_pitch': 80.0,
+            'shoulder_roll': 80.0,
+            'shoulder_yaw': 80.0,
+            'elbow': 80.0,
         }
         damping = {
-            'shoulder_pitch': 2.0,
-            'shoulder_roll': 2.0,
-            'shoulder_yaw': 2.0,
-            'elbow': 2.0,
+            'shoulder_pitch': 0.8,
+            'shoulder_roll': 0.8,
+            'shoulder_yaw': 0.8,
+            'elbow': 0.8,
         }
         action_scale = 1.0  # target = action * scale + default
         decimation = 4       # 策略频率 = 200Hz / 4 = 50Hz
@@ -105,7 +105,7 @@ class FallArmCfg(BaseConfig):
         # _create_envs 中初始化下面 5 个
         # 负载质量
         randomize_payload_mass = use_random
-        payload_mass_range = [-9.5, -5.5]
+        payload_mass_range = [-12, -8]
         # 质心偏移
         randomize_com_displacement = use_random
         com_displacement_range = [-0.05, 0.05]
@@ -150,11 +150,11 @@ class FallArmCfg(BaseConfig):
 
     class curriculum:
         use_curriculum = True
-        force_initial = 100.0               # [N] 初始辅助上升力 (接近完全抵消重力)
+        force_initial = 50.0               # [N] 初始辅助上升力 (接近完全抵消重力)
         force_decrement = 1.0              # [N] 通过课程后每次减小的力
         force_min = 0.0                     # [N] 最小辅助力 (完全无辅助)
-        action_rescale_decrement = 0.005     # 通过课程后每次减小的动作缩放
-        action_rescale_min = 0.5           # 最小动作缩放
+        action_rescale_decrement = 0.01     # 通过课程后每次减小的动作缩放
+        action_rescale_min = 0.50           # 最小动作缩放
         check_min_shoulder_root_height = True                   # 是否开启对回合内最低高度的判断
         # check_min_shoulder_root_height = False                   # 是否开启对回合内最低高度的判断
         min_shoulder_root_height_lower_threshold = 0.30         # [m] 回合内 shoulder_root 最低高度须高于此值才通过
@@ -167,45 +167,34 @@ class FallArmCfg(BaseConfig):
     class rewards:
         reward_groups = ['task', 'regularization', 'behavior', 'effort', 'stabilization']
         num_reward_groups = len(reward_groups)
-        reward_group_weights = [1.5, 0.1, 0.5, 0.02, 1]
+        reward_group_weights = [1.5, 0.2, 0.5, 0.02, 1.0]
 
         class scales:
             termination = -1
-            # task_shoulder_root_height = 1
             task_arm_pose = 1
             task_all_dof_pos = 1
 
     class constraints:
         land_height = 0.55
-
         # task reward
-        shoulder_root_height_threshold = 0.55
-        shoulder_root_height_margin = 0.30
-        shoulder_root_height_value_at_margin = 0.1
-        # arm_pose_threshold = 0.1
-        # arm_pose_margin = 2.0
-        # arm_pose_value_at_margin = 0.1
         arm_pose_sigma = 0.5
 
         # behavior reward
         no_releave_after_contact_threshold = 3  # [frames] 从接触开始的无接触候选必须持续至少这个帧数才被惩罚
         shoulder_pitch_dof_pos_threshold = 0.45
-        elbow_dof_pos_threshold = -0.18
+        elbow_dof_pos_threshold = 1.15
         ee_distance_threshold = 0.05
         ee_distance_margin = 0.50
-        ee_distance_value_at_margin = 0.1
-        high_shoulder_root_height_threshold = 0.45
-        # min_shoulder_root_height_range_lower_threshold = 0.30
-        # min_shoulder_root_height_range_upper_threshold = 0.40
-        # min_shoulder_root_height_range_margin = 0.05
-        # min_shoulder_root_height_range_value_at_margin = 0.1
+        ee_distance_value_at_margin = 0.05
+        high_shoulder_root_height_threshold = 0.30
+        low_shoulder_root_height_threshold = 0.55
 
         # effort reward
         low_max_shoulder_pitch_torque_sigma = 150
         low_max_elbow_torque_sigma = 150
         low_max_shoulder_root_acc_threshold = 100
         low_max_shoulder_root_acc_margin = 200
-        low_max_shoulder_root_acc_value_at_margin = 0.1
+        low_max_shoulder_root_acc_value_at_margin = 0.05
 
         # stabilization reward
         target_shoulder_root_height_threshold = 0.55
@@ -225,14 +214,15 @@ class FallArmCfg(BaseConfig):
             # behavior reward
             behavior_penalised_contact = -50
             behavior_encourage_contact = 10
-            behavior_no_releave_after_contact = -50
+            behavior_no_releave_after_contact = -10
             behavior_shoulder_pitch_dof_pos = -50
             behavior_shoulder_roll_dof_pos = -50
             behavior_shoulder_yaw_dof_pos = -50
             behavior_elbow_dof_pos = -50
             behavior_ee_distance = 10
-            behavior_ee_vel = -50
-            behavior_high_shoulder_root_height = 30
+            behavior_ee_vel = -10
+            behavior_high_shoulder_root_height = 50
+            behavior_low_shoulder_root_height = -50
 
             # effort reward
             effort_low_max_shoulder_pitch_torque = 10
@@ -326,4 +316,4 @@ class FallArmCfgPPO(BaseConfig):
         load_run = -1  # -1 = last run
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
-        max_iterations = 12000  # number of policy updates
+        max_iterations = 5000  # number of policy updates
